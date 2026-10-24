@@ -266,7 +266,11 @@ void loop() {
 
 // initialize the registers and synchronize with EEPROM
 void initializeRegisters() {
+#if defined(WITTY_PI_4_MINI)
+  i2cReg[I2C_ID] = 0x36;
+#else
   i2cReg[I2C_ID] = 0x26;
+#endif
   i2cReg[I2C_FW_REVISION] = 0x07;
   
   i2cReg[I2C_CONF_ADDRESS] = 0x08;
@@ -778,6 +782,7 @@ ISR (TIM1_OVF_vect) {
     if (turningOff) {
       if (turnOffFromTXD && digitalRead(PIN_TX_UP) == 1) {  // if it is rebooting
         turningOff = false;
+        turnOffFromTXD = false; // reboot consumed this TXD shutdown
         updateRegister(I2C_ACTION_REASON, REASON_REBOOT);
         ledOn();
       } else {  // cut the power and enter sleep

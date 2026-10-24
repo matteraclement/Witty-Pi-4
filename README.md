@@ -26,4 +26,34 @@ Here are the configurations on your Arduino IDE:
 
 ![](https://github.com/uugear/Witty-Pi-4/raw/main/Firmware/WittyPi4_Arduino_Settings.png)
 
+The local shutdown-state correction clears `turnOffFromTXD` when a reboot has
+consumed the TXD shutdown request, and on power cut. It prevents the next button,
+alarm or protection-triggered shutdown from being mistaken for another reboot.
+The Mini uses the `WittyPi4` sketch with `WITTY_PI_4_MINI` defined (product ID
+`0x36`); standard builds remain `0x26`, and `WittyPi4_L3V7` remains `0x37`.
+Firmware revision and shutdown timing are unchanged.
+
+Compile from this checkout with ATTinyCore **1.5.2**, AVR GCC
+**7.3.0-atmel3.6.1-arduino7**, LTO and linker relaxation:
+
+```sh
+arduino-cli compile \
+  --fqbn 'ATTinyCore:avr:attinyx41:chip=841,clock=8internal,pinmapping=old,LTO=enable,wiremode=slave,neopixelport=porta,millis=disabled,eesave=aenable,bod=2v7,bodact=enabled,bodpd=enabled' \
+  --build-property compiler.c.elf.extra_flags=-Wl,--relax \
+  --output-dir /tmp/wp4-standard Firmware/WittyPi4
+```
+
+For Mini, add `--build-property compiler.cpp.extra_flags=-DWITTY_PI_4_MINI`
+and select a different output directory. For L3V7, select
+`Firmware/WittyPi4_L3V7` without the Mini define.
+Standard and Mini occupy **8,190 / 8,192 bytes** of flash; L3V7 occupies
+**8,090 / 8,192 bytes**. All three use 223 / 512 bytes of static RAM.
+Without relaxation the corrected standard sketch exceeds flash capacity by two
+bytes with this compiler; do not bypass the linker capacity check.
+
+`python3 -m unittest discover -s Firmware/tests -v` compiles and exercises the
+actual production handlers for all three product IDs. These tests and successful
+AVR builds are offline evidence only. Existing vendor HEX files are not updated,
+and no board has been flashed or physically qualified by these checks.
+
 To upload the firmware to Witty Pi, you can follow [this document](https://www.uugear.com/portfolio/compile-flash-firmware-for-witty-pi-4/).
