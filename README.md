@@ -24,13 +24,16 @@ Witty Pi 4 supports all Raspberry Pi models with 40-pin header, including A+, B+
 | --- | --- | --- | --- |
 | [`wp4-4.23-fw7-d466cbc18aae`](release/wp4-4.23-fw7-d466cbc18aae/) | `d466cbc18aaea619c1f41ddb170789a661be3338` | Revision 7, `legacy-rev7` | Original committed HEX files, archived without rebuilding |
 | [`wp4-4.23-fw9-8159567738cd`](release/wp4-4.23-fw9-8159567738cd/) | `8159567738cd020110f778a60e9f605ad37b56bf` | Revision 9, `atomic-rev9` | All three variants rebuilt with the pinned toolchain; LF-normalized HEX files match the committed files byte-for-byte |
+| [`wp4-4.23-fw9-ca63d2145fa2`](release/wp4-4.23-fw9-ca63d2145fa2/) | `ca63d2145fa2826c455d6a690f52cfb8d085775c` | Revision 9, `atomic-rev9` | Fresh three-variant rebuild from the committed release-tooling revision; firmware hashes unchanged from `8159567` |
 
 The first bundle preserves the fleet's source baseline, including its known
 limitations; it is not a dump or attestation of any installed board. The second
 contains the reboot/shutdown-state correction, coherent RTC reads, oscillator
-validity and transport-failure handling, and atomic calendar writes. Both host
-trees still declare software **4.23**: that version alone does not identify a
-release. Neither bundle establishes deployment or physical qualification.
+validity and transport-failure handling, and atomic calendar writes. The
+`ca63d2145fa2` bundle packages that same host software and firmware from the
+commit introducing release tooling. All bundles declare software **4.23**:
+that version alone does not identify a release. None establishes deployment
+or physical qualification.
 
 Each directory contains:
 
