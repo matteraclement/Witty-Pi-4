@@ -16,6 +16,130 @@ Witty Pi 4 supports all Raspberry Pi models with 40-pin header, including A+, B+
 *   [Witty Pi 4 Product Page](https://www.uugear.com/product/witty-pi-4/)
 *   [Witty Pi 4 User Manual](https://www.uugear.com/doc/WittyPi4_UserManual.pdf)
 
+### Immutable vendor releases
+
+[`release/`](release/) contains portable WP4 inputs for downstream integration:
+
+| Bundle | Source commit | Firmware | Build evidence |
+| --- | --- | --- | --- |
+| [`wp4-4.23-fw7-d466cbc18aae`](release/wp4-4.23-fw7-d466cbc18aae/) | `d466cbc18aaea619c1f41ddb170789a661be3338` | Revision 7, `legacy-rev7` | Original committed HEX files, archived without rebuilding |
+| [`wp4-4.23-fw9-8159567738cd`](release/wp4-4.23-fw9-8159567738cd/) | `8159567738cd020110f778a60e9f605ad37b56bf` | Revision 9, `atomic-rev9` | All three variants rebuilt with the pinned toolchain; LF-normalized HEX files match the committed files byte-for-byte |
+
+The first bundle preserves the fleet's source baseline, including its known
+limitations; it is not a dump or attestation of any installed board. The second
+contains the reboot/shutdown-state correction, coherent RTC reads, oscillator
+validity and transport-failure handling, and atomic calendar writes. Both host
+trees still declare software **4.23**: that version alone does not identify a
+release. Neither bundle establishes deployment or physical qualification.
+
+Each directory contains:
+
+- `release-manifest.json`: schema version 1, full source commit/tree and Git blob
+  inventory, software version, explicit compatibility profile, expected products,
+  artifact SHA-256/size, flash usage and provenance/qualification limits.
+- `SHA256SUMS`: checksums for every other file in the bundle, including the manifest.
+- `wittypi-software.tar.gz`: the exact committed `Software/wittypi/` tree under
+  `wittypi/`, retaining executable modes. No host compilation is needed.
+- `source.tar.gz`: the same commit's `Firmware/`, `Software/`, `README.md` and
+  `LICENSE`; no nested release bundles or untracked build products.
+- `WittyPi4.ino.hex`, `WittyPi4_Mini.ino.hex`, `WittyPi4_L3V7.ino.hex`: respectively
+  standard `0x26`, Mini `0x36` and L3V7 `0x37` firmware, plus the unchanged `LICENSE`.
+- `build-verification.json` only for a successfully rebuilt bundle: observed
+  toolchain, commands, compiler output, hashes and flash/static-RAM usage.
+
+AVR `objcopy` emits CRLF text while Git stores these HEX files with LF. Rebuilds
+normalize only those line endings, never record contents, addresses or firmware
+bytes. The receipt retains the raw compiler HEX hash/size/encoding and the
+normalized artifact hash/size. A different record or byte rejects publication.
+
+From the repository root, verify either copied bundle without Git, Arduino,
+network access or hardware:
+
+```sh
+make verify RELEASE=release/wp4-4.23-fw7-d466cbc18aae
+make verify RELEASE=release/wp4-4.23-fw9-8159567738cd
+```
+
+`sha256sum -c SHA256SUMS` inside either directory checks its file hashes. The
+Python verifier additionally checks the manifest, HEX bounds/checksums, archive
+safety, Git blob inventory, source/payload consistency and any build receipt.
+Checksums prove integrity, not external authenticity: downstream consumers must
+pin the reviewed manifest SHA-256.
+
+To create a future release, first commit the intended software, source and
+matching HEX files. With Arduino CLI, ATTinyCore **1.5.2** and AVR GCC
+**7.3.0-atmel3.6.1-arduino7** already installed:
+
+```sh
+make release
+```
+
+A Git commit pins source; it does not automatically create a release. After
+creation and verification, commit the generated release directory separately.
+The manifest continues to identify the source commit used for the build. That
+artifact-only commit keeps the checkout clean and does not require another
+release; otherwise packaging would create an endless commit/release loop.
+
+This defaults to committed `HEAD`, profile `atomic-rev9`, output `release/` and
+rebuilding all three variants. `REF=<commit>`, `OUTPUT=/path/to/releases` and
+`ARDUINO_CLI=/path/to/arduino-cli` override the source, destination and toolchain;
+`PYTHON=/path/to/python3` selects Python. The release tool does not install packages
+or alter Arduino configuration. It exports the resolved commit's Git objects,
+not working-tree changes, and requires each generated HEX to match its committed
+artifact. The historical profile preserves original binaries without rebuilding:
+
+```sh
+make release REF=d466cbc18aaea619c1f41ddb170789a661be3338 PROFILE=legacy-rev7
+```
+
+Creation refuses an existing destination, including the bundled examples above.
+Use `OUTPUT=/path/to/new-release-root` for a separate export. The underlying
+`python3 tools/release.py create --ref <commit> --profile <profile>` interface
+remains available; omitting its `--rebuild` flag archives committed artifacts and
+explicitly records `archived-not-rebuilt`, not source-to-binary verification.
+`make release` always rebuilds `atomic-rev9` and archives `legacy-rev7`. Profile
+selection is an explicit maintainer review, not automatic ABI discovery. Only the
+two listed protocol profiles are supported. Publication happens after verification;
+failed builds leave no final release. Retain old directories while devices or
+rollback plans need them; never edit a published bundle or choose a board's input
+by "newest".
+
+#### Downstream and flashing boundaries
+
+These are **unmanaged vendor scripts**, not DynAPI's patched
+`install/wittypi_software`. Copying a bundle does not install it or enable revision
+9 in DynAPI. A downstream integration must preserve managed clock/schedule and
+shutdown ownership, retain revision-7 support and add revision-9 RTC transactions.
+The standalone revision-9 host rejects revision-7 RTC operations; it is not a
+drop-in replacement for the old fleet. `Software/install.sh` downloads UUGear's
+network `LATEST`, not these pinned bundles, and must not be used as their installer.
+
+WP4 exposes product ID and firmware revision, not a cryptographic build identity.
+Revision 7 can be overridden by retained EEPROM; revision 9 comes from the running
+image. Product ID can still be overridden by EEPROM in both. Record the actual
+board variant and flashed artifact hash; a register read cannot prove a Git commit.
+
+Firmware flashing is a separate, authorized ISP maintenance operation, never a
+release-tool action. Follow the [vendor procedure](https://www.uugear.com/portfolio/compile-flash-firmware-for-witty-pi-4/)
+with a compatible programmer and the correct variant. Its erase/fuse procedure
+uses `E:F5 H:DD L:E2`; do not assume that it preserves EEPROM. Before flashing,
+record calibration (especially RTC offset register 37), settings and alarms, and
+decide the EEPROM retention/reset policy. Recheck identity, calibration, settings,
+clock synchronization, clean shutdown and real wake afterward. A matching build
+or checksum is not electrical, timing or fleet qualification.
+
+The complete hardware-free suites are:
+
+```sh
+python3 -m unittest discover -s Firmware/tests -v
+python3 -m unittest discover -s tools/tests -v
+```
+
+The packaged revision-9 build was verified for all three variants. Firmware
+regressions cover 14 tests; release/build regressions cover 29 tests, including
+corruption, unsafe archives, working-tree isolation, failed-build cleanup,
+immutable destinations, compiler line endings and AVR resource limits.
+
 
 ### Modify the Firmware:
 If you want to change the behavior of Witty Pi 4, you can modify the firmware, compile it and upload to your Witty Pi 4.
