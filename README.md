@@ -46,11 +46,12 @@ arduino-cli compile \
 For Mini, add `--build-property compiler.cpp.extra_flags=-DWITTY_PI_4_MINI`
 and select a different output directory. For L3V7, select
 `Firmware/WittyPi4_L3V7` without the Mini define.
-Standard and Mini occupy **8,102 / 8,192 bytes** of flash; L3V7 occupies
-**8,002 / 8,192 bytes**. All three use 223 / 512 bytes of static RAM.
+Standard and Mini occupy **8,126 / 8,192 bytes** of flash; L3V7 occupies
+**8,026 / 8,192 bytes**. All three use 223 / 512 bytes of static RAM.
 
 `python3 -m unittest discover -s Firmware/tests -v` exercises the production
-shutdown handlers, RTC rollover/alarm handling, and host calendar decoding.
+shutdown handlers, RTC rollover/alarm handling, oscillator validity, internal
+I2C NACK/recovery, malformed host reads, and clock-setting failure behavior.
 These checks and AVR builds are offline evidence only; no board has been
 flashed or physically qualified. The checked-in HEX images are rebuilt from
 these sources with the configuration above.
@@ -77,8 +78,20 @@ RTC values retain the existing local-time convention.
 
 The seconds register's oscillator-stop (OS) flag is checked before converting
 time. A flagged RTC cannot set Linux time or trigger firmware startup/shutdown
-alarms. Failed RTC-to-system synchronization leaves NTP and `TIME_UNKNOWN`
-unchanged. The boot-time bad-time check includes OS as well as the existing
-zero-year initialization check; its existing system-to-RTC initialization
-policy is unchanged.
+alarms. Rejected reads leave NTP and `TIME_UNKNOWN` unchanged. The boot-time
+bad-time check includes OS as well as the existing zero-year initialization
+check; its existing system-to-RTC initialization policy is unchanged.
+
+Internal address or register-pointer NACKs produce an empty receive buffer,
+not stale/bus data. The bridge encodes that failure as `0xFF` bytes, which
+cannot be valid RTC calendar fields. The host rejects that marker, incomplete
+transfers, malformed BCD, and invalid dates before attempting synchronization.
+A transport failure skips boot-time synchronization in both directions; it
+is not treated as an uninitialized RTC.
+
+RTC-to-system synchronization succeeds only if NTP can be disabled and Linux
+accepts the new time. If setting the clock fails, the prior enabled NTP state
+is restored; failure to restore it is reported explicitly. `TIME_UNKNOWN` is
+updated only after a successful clock change. These checks do not detect
+electrical corruption that happens to look like valid calendar data.
 

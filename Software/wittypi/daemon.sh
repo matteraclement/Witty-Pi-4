@@ -64,7 +64,9 @@ if [ $has_mc == 1 ] ; then
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_CTRL1 0
   
   # synchronize system and RTC time
-  if [ $(rtc_has_bad_time) == 1 ]; then
+  if ! rtc_bad=$(rtc_has_bad_time); then
+    log 'Cannot read RTC time; skipping clock synchronization.'
+  elif [ "$rtc_bad" == 1 ]; then
     log 'RTC has bad time, write system time into RTC'
     system_to_rtc
   else

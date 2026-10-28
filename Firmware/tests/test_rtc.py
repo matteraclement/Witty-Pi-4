@@ -29,21 +29,26 @@ using boolean = bool;
 #define I2C_READ 1
 byte rtc[18], nextRtc[18], pointerReg;
 bool expectPointer, reading, rollover;
-int clicks;
+int clicks, nack, busReads, stops;
 bool i2c_init_() { return true; }
-bool i2c_start_(uint8_t) { expectPointer=true; reading=false; return true; }
+bool i2c_start_(uint8_t) {
+  expectPointer=true; reading=false;
+  return nack != 1;
+}
 bool i2c_rep_start_(uint8_t address) {
   reading=address & 1;
   if (!reading) expectPointer=true;
-  return true;
+  return nack != 3;
 }
 bool i2c_write_(uint8_t value) {
+  if (nack == 2) return false;
   if (expectPointer) { pointerReg=value; expectPointer=false; }
   else rtc[pointerReg++]=value;
   return true;
 }
-uint8_t i2c_read_(bool) { return rtc[pointerReg++]; }
+uint8_t i2c_read_(bool) { ++busReads; return rtc[pointerReg++]; }
 void i2c_stop_() {
+  ++stops;
   // PCF85063A freezes the counters for the access, not across separate reads.
   if (reading && rollover) {
     for (int i=0; i<18; ++i) rtc[i]=nextRtc[i];
@@ -128,6 +133,37 @@ int main() {
   rtc[4]=0x59;
   processAlarmIfNeeded();
   assert(clicks==2 && i2cReg[I2C_ALARM1_TRIGGERED]);
+
+  for (int failure=1; failure<=3; ++failure) {
+    // Seed unread data, then fail at write address, register pointer, or read address.
+    nack=0;
+    assert(readFromDevice(ADDRESS_RTC, 4, 7)==7);
+    nack=failure; busReads=stops=0;
+    assert(readFromDevice(ADDRESS_RTC, 4, 7)==0);
+    assert(softWireMaster.available()==0 && softWireMaster.read()==-1);
+    assert(busReads==0 && stops==1);
+    assert(softWireMaster.endTransmission()==(failure==2 ? 3 : 2));
+
+    TinyWireS.response.clear();
+    i2cIndex=I2C_RTC_SECONDS;
+    requestEvent();
+    assert(TinyWireS.response==std::vector<byte>(7, 0xff));
+    i2cReg[I2C_ALARM1_TRIGGERED]=0;
+    processAlarmIfNeeded();
+    assert(clicks==2 && !i2cReg[I2C_ALARM1_TRIGGERED]);
+
+    // Recovery must not reuse the failed or previous receive buffer.
+    nack=0; rtc[4]=0x12;
+    assert(readFromDevice(ADDRESS_RTC, 4, 7)==7);
+    assert(softWireMaster.read()==0x12);
+    rtc[4]=0x59;
+  }
+  // The internal-register-address overload must preserve a pointer-write NACK.
+  nack=2;
+  assert(softWireMaster.requestFrom(uint8_t(ADDRESS_RTC), uint8_t(7),
+                                  uint32_t(4), uint8_t(1), uint8_t(1))==0);
+  assert(softWireMaster.available()==0 && softWireMaster.read()==-1);
+  assert(softWireMaster.endTransmission()==3);
 }
 """
 
@@ -137,9 +173,38 @@ source "$1"
 export LC_ALL=C TZ=UTC
 log() { printf '%s\n' "$*" >&2; }
 log2file() { printf '%s\n' "$*" >&2; }
-i2cget() { echo "${REVISION:-0x08}"; }
-i2ctransfer() { printf '%s\n' "$SNAPSHOT"; }
+i2cget() { echo "${REVISION:-0x08}"; return "${I2C_STATUS:-0}"; }
+i2ctransfer() { printf '%s\n' "$SNAPSHOT"; return "${TRANSFER_STATUS:-0}"; }
+timedatectl() { echo "${NTP_STATE:-yes}"; return "${SHOW_STATUS:-0}"; }
+sleep() { :; }
 """
+
+CLOCK_COMMANDS = r"""
+ntp=${NTP_STATE:-yes}
+attempts=0
+writes=0
+sudo() {
+  if [[ $1 == timedatectl ]]; then
+    if [[ $3 == 0 ]]; then
+      [[ ${FAIL_DISABLE:-0} == 1 ]] && return 1
+      ntp=no
+    else
+      [[ ${FAIL_RESTORE:-0} == 1 ]] && return 1
+      ntp=yes
+    fi
+  elif [[ $1 == date ]]; then
+    attempts=$((attempts+1))
+    [[ ${FAIL_DATE:-0} == 1 ]] && return 1
+    command date -d "$3" +%s || return
+    writes=$((writes+1))
+  fi
+}
+TIME_UNKNOWN=1
+rtc_to_system
+status=$?
+printf '%s %s %s %s %s\n' "$status" "$TIME_UNKNOWN" "$ntp" "$attempts" "$writes"
+"""
+
 
 
 def shell(command, snapshot, **environment):
@@ -218,6 +283,61 @@ class RtcReads(unittest.TestCase):
             'TIME_UNKNOWN=1; rtc_to_system; status=$?; '
             'printf "%s %s\\n" "$status" "$TIME_UNKNOWN"', snapshot)
         self.assertEqual(result.stdout.strip(), "0 0")
+
+
+    def test_invalid_snapshots_do_not_change_system_time(self):
+        snapshots = [
+            "", "0x00", "0x00 0x00 0x00 0x28 0x03 0x10",
+            "0x00 0x00 0x00 0x28 0x03 0x10 0x26 0x00",
+            "0xgg 0x00 0x00 0x28 0x03 0x10 0x26",
+            "0x00 0x00 0x00 0x28\n0x03 0x10 0x26",
+            "0xff " * 7,
+            "0x00 0x1a 0x12 0x28 0x03 0x10 0x26",
+            "0x60 0x00 0x00 0x28 0x03 0x10 0x26",
+            "0x00 0x60 0x00 0x28 0x03 0x10 0x26",
+            "0x00 0x00 0x24 0x28 0x03 0x10 0x26",
+            "0x00 0x00 0x12 0x30 0x03 0x02 0x26",
+            "0x00 0x00 0x12 0x28 0x03 0x00 0x26",
+        ]
+        for snapshot in snapshots:
+            with self.subTest(snapshot=snapshot):
+                result = shell(CLOCK_COMMANDS, snapshot)
+                self.assertEqual(result.stdout.strip(), "1 1 yes 0 0", result.stderr)
+
+    def test_transport_failure_does_not_mean_uninitialized_rtc(self):
+        valid = "0x56 0x34 0x12 0x28 0x03 0x10 0x26"
+        for snapshot, environment in [
+            ("0xff " * 7, {}),
+            (valid, {"TRANSFER_STATUS": "1"}),
+            (valid, {"I2C_STATUS": "1"}),
+        ]:
+            with self.subTest(snapshot=snapshot, environment=environment):
+                result = shell("rtc_has_bad_time", snapshot, **environment)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                result = shell(CLOCK_COMMANDS, snapshot, **environment)
+                self.assertEqual(result.stdout.strip(), "1 1 yes 0 0", result.stderr)
+
+    def test_i2c_read_failure_has_status_and_no_data(self):
+        result = shell("i2c_read 1 8 12", "", I2C_STATUS="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_clock_command_failures_preserve_unknown_state(self):
+        snapshot = "0x56 0x34 0x12 0x28 0x03 0x10 0x26"
+        cases = [
+            ({}, "0 0 no 1 1"),
+            ({"SHOW_STATUS": "1"}, "1 1 yes 0 0"),
+            ({"NTP_STATE": "unexpected"}, "1 1 unexpected 0 0"),
+            ({"FAIL_DISABLE": "1"}, "1 1 yes 0 0"),
+            ({"FAIL_DATE": "1"}, "1 1 yes 1 0"),
+            ({"FAIL_DATE": "1", "NTP_STATE": "no"}, "1 1 no 1 0"),
+            ({"FAIL_DATE": "1", "FAIL_RESTORE": "1"}, "1 1 no 1 0"),
+        ]
+        for environment, expected in cases:
+            with self.subTest(environment=environment):
+                result = shell(CLOCK_COMMANDS, snapshot, **environment)
+                self.assertEqual(result.stdout.strip(), expected, result.stderr)
 
 
 if __name__ == "__main__":

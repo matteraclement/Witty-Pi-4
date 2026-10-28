@@ -93,6 +93,7 @@ public:
   }
 
   size_t write(uint8_t data) {
+    if (error) return 0;
     if (i2c_write_(data)) {
       return 1;
     } else {
@@ -111,7 +112,6 @@ public:
 
   uint8_t requestFrom(uint8_t address, uint8_t quantity,
           uint32_t iaddress, uint8_t isize, uint8_t sendStop) {
-    uint8_t localerror = 0;
     if (isize > 0) {
       // send internal address; this mode allows sending a repeated start to access
       // some devices' internal registers. This function is executed by the hardware
@@ -124,14 +124,14 @@ public:
       // write internal register address - most significant byte first
       while (isize-- > 0)
   write((uint8_t)(iaddress >> (isize*8)));
-      endTransmission(false);
     }
     // clamp to buffer length
     if(quantity > BUFFER_LENGTH){
       quantity = BUFFER_LENGTH;
     }
-    localerror = !i2c_rep_start_((address<<1) | I2C_READ);
-    if (error == 0 && localerror) error = 2;
+    if (error == 0 && !i2c_rep_start_((address<<1) | I2C_READ)) error = 2;
+    // Never expose bus data or an old receive buffer after an address/data NACK.
+    if (error) quantity = 0;
     // perform blocking read into buffer
     for (uint8_t cnt=0; cnt < quantity; cnt++)
       rxBuffer[cnt] = i2c_read_(cnt == quantity-1);

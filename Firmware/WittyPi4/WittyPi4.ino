@@ -653,6 +653,7 @@ void requestEvent() {
       count = (i2cIndex == I2C_LM75B_CONF) ? 1 : 2;
     }
     readFromDevice(address, index, count);
+    // An empty receive buffer yields 0xFF, an invalid calendar/failure marker.
     while (count--) {
       TinyWireS.write(softWireMaster.read());
     }
@@ -849,7 +850,7 @@ boolean canTriggerAlarm() {
 // process the alarm from RTC, if exists
 void processAlarmIfNeeded() {
   // Keep seconds through day in one RTC access across clock rollovers.
-  readFromDevice(ADDRESS_RTC, I2C_RTC_SECONDS - I2C_RTC_CTRL1, 4);
+  if (readFromDevice(ADDRESS_RTC, I2C_RTC_SECONDS - I2C_RTC_CTRL1, 4) != 4) return;
   byte seconds = softWireMaster.read();
   if (seconds & 0x80) return;  // oscillator stopped: no reliable alarm time
   seconds = bcd2dec(seconds);

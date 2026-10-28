@@ -216,12 +216,27 @@ rtc_has_bad_time()
 read_rtc_snapshot()
 {
   local revision
-  revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION")
+  revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION") || return 1
   if [[ ! $revision =~ ^0x[0-9a-fA-F]{2}$ ]] || (( revision < 8 )); then
     echo 'RTC snapshot requires firmware revision 8 or newer.' >&2
     return 1
   fi
-  i2ctransfer -y "$I2C_BUS" "w1@$I2C_MC_ADDRESS" "$I2C_RTC_SECONDS" r7
+  local snapshot
+  snapshot=$(i2ctransfer -y "$I2C_BUS" "w1@$I2C_MC_ADDRESS" "$I2C_RTC_SECONDS" r7) || return 1
+  if [[ ! $snapshot =~ ^[[:blank:]]*0x[0-9a-fA-F]{2}([[:blank:]]+0x[0-9a-fA-F]{2}){6}[[:blank:]]*$ ]]; then
+    echo 'Incomplete or malformed RTC snapshot.' >&2
+    return 1
+  fi
+  local -a rtc
+  read -r -a rtc <<< "$snapshot"
+  local value
+  for value in "${rtc[@]}"; do
+    if (( value == 255 )); then
+      echo 'RTC read failed on the internal I2C bus.' >&2
+      return 1
+    fi
+  done
+  echo "$snapshot"
 }
 
 get_rtc_timestamp()
@@ -232,6 +247,19 @@ get_rtc_timestamp()
   read -r -a rtc <<< "$snapshot"
   if (( rtc[0] & 0x80 )); then
     echo 'RTC oscillator stopped; time is not reliable.' >&2
+    return 1
+  fi
+  local index value
+  for index in 0 1 2 3 5 6; do
+    value=${rtc[index]}
+    if (( (value & 0xF) > 9 || (value >> 4) > 9 )); then
+      echo 'Invalid BCD in RTC calendar.' >&2
+      return 1
+    fi
+  done
+  if (( rtc[0] > 0x59 || rtc[1] > 0x59 || rtc[2] > 0x23 ||
+        rtc[3] < 1 || rtc[3] > 0x31 || rtc[5] < 1 || rtc[5] > 0x12 )); then
+    echo 'RTC calendar field out of range.' >&2
     return 1
   fi
   local sec=$(bcd2dec $((0x7F & rtc[0])))
@@ -245,11 +273,12 @@ get_rtc_timestamp()
 
 get_rtc_time()
 {
-  local rtc_ts=$(get_rtc_timestamp)
-  if [ "$rtc_ts" == "" ] ; then
+  local rtc_ts
+  if ! rtc_ts=$(get_rtc_timestamp); then
     echo 'N/A'
+    return 1
   else
-    echo $(date +'%Y-%m-%d %H:%M:%S %Z' -d @$rtc_ts)
+    date +'%Y-%m-%d %H:%M:%S %Z' -d "@$rtc_ts"
   fi
 }
 
@@ -380,8 +409,23 @@ rtc_to_system()
     log '  RTC time is unavailable or invalid; system clock unchanged.' >&2
     return 1
   fi
-  sudo timedatectl set-ntp 0 >/dev/null
-  sudo date -s @$rtc_ts >/dev/null
+  local ntp_state
+  if ! ntp_state=$(timedatectl show --property=NTP --value) ||
+      [[ $ntp_state != yes && $ntp_state != no ]]; then
+    log '  Cannot determine NTP state; system clock unchanged.' >&2
+    return 1
+  fi
+  if ! sudo timedatectl set-ntp 0 >/dev/null; then
+    log '  Cannot disable NTP; system clock unchanged.' >&2
+    return 1
+  fi
+  if ! sudo date -s "@$rtc_ts" >/dev/null; then
+    if [[ $ntp_state == yes ]] && ! sudo timedatectl set-ntp 1 >/dev/null; then
+      log '  Failed to restore NTP after clock-setting failure.' >&2
+    fi
+    log '  Failed to set system time from RTC.' >&2
+    return 1
+  fi
   TIME_UNKNOWN=0
   log '  Done :-)'
 }
@@ -432,13 +476,14 @@ i2c_read()
   if [ $# -gt 3 ] ; then
     retry=$4
   fi
-  local result=$(i2cget -y $1 $2 $3)
-  if [[ $result =~ ^0x[0-9a-fA-F]{2}$ ]] ; then
+  local result
+  if result=$(i2cget -y "$1" "$2" "$3") && [[ $result =~ ^0x[0-9a-fA-F]{2}$ ]]; then
     echo $result;
   else
     retry=$(( $retry + 1 ))
     if [ $retry -eq 4 ] ; then
-      log "I2C read $1 $2 $3 failed (result=$result), and no more retry."
+      log "I2C read $1 $2 $3 failed (result=$result), and no more retry." >&2
+      return 1
     else
       sleep 1
       log2file "I2C read $1 $2 $3 failed (result=$result), retrying $retry ..."
@@ -711,7 +756,11 @@ clear_below_temperature_action()
 
 check_sys_and_rtc_time()
 {
-  local rtc_ts=$(get_rtc_timestamp)
+  local rtc_ts
+  if ! rtc_ts=$(get_rtc_timestamp); then
+    echo '[Warning] RTC time is unavailable or invalid; synchronize time before scheduling.'
+    return 1
+  fi
   local sys_ts=$(get_sys_timestamp)
   local delta=$((rtc_ts-sys_ts))
   if [ "${delta#-}" -gt 10 ]; then
