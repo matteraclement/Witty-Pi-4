@@ -1,2 +1,8 @@
 
 .DS_Store
+
+# Generated firmware disassembly
+/Firmware/**/*.ino.lst
+
+# Python test bytecode
+__pycache__/
