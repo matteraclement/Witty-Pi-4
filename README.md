@@ -31,7 +31,8 @@ consumed the TXD shutdown request, and on power cut. It prevents the next button
 alarm or protection-triggered shutdown from being mistaken for another reboot.
 The Mini uses the `WittyPi4` sketch with `WITTY_PI_4_MINI` defined (product ID
 `0x36`); standard builds remain `0x26`, and `WittyPi4_L3V7` remains `0x37`.
-Shutdown timing is unchanged. Firmware revision **8** adds coherent RTC reads.
+Shutdown timing is unchanged. Firmware revision **9** adds atomic RTC calendar
+writes alongside the coherent reads introduced in revision 8.
 
 Compile from this checkout with ATTinyCore **1.5.2**, AVR GCC
 **7.3.0-atmel3.6.1-arduino7**, LTO and linker relaxation:
@@ -46,22 +47,24 @@ arduino-cli compile \
 For Mini, add `--build-property compiler.cpp.extra_flags=-DWITTY_PI_4_MINI`
 and select a different output directory. For L3V7, select
 `Firmware/WittyPi4_L3V7` without the Mini define.
-Standard and Mini occupy **8,126 / 8,192 bytes** of flash; L3V7 occupies
-**8,026 / 8,192 bytes**. All three use 223 / 512 bytes of static RAM.
+Standard and Mini occupy **8,174 / 8,192 bytes** of flash; L3V7 occupies
+**8,074 / 8,192 bytes**. All three use 223 / 512 bytes of static RAM.
 
 `python3 -m unittest discover -s Firmware/tests -v` exercises the production
-shutdown handlers, RTC rollover/alarm handling, oscillator validity, internal
-I2C NACK/recovery, malformed host reads, and clock-setting failure behavior.
+shutdown handlers, RTC read/write rollovers, rejected partial calendar writes,
+firmware upgrades with retained EEPROM, oscillator validity, internal I2C
+NACK/recovery, malformed host reads, and synchronization failure behavior.
 These checks and AVR builds are offline evidence only; no board has been
 flashed or physically qualified. The checked-in HEX images are rebuilt from
 these sources with the configuration above.
 
 To upload the firmware to Witty Pi, you can follow [this document](https://www.uugear.com/portfolio/compile-flash-firmware-for-witty-pi-4/).
 
-### RTC read protocol
+### RTC calendar protocol
 
-Install the matching revision-8-or-newer firmware before using this software.
-Older firmware is rejected rather than falling back to inconsistent byte reads.
+Install the matching revision-9-or-newer firmware before using this software.
+Reads require revision 8; calendar writes require revision 9. Unsupported
+operations are rejected rather than falling back to individual calendar bytes.
 The host requires `i2ctransfer` from `i2c-tools` and reads seven bytes in one
 combined transaction:
 
@@ -75,6 +78,19 @@ access; alarm decisions likewise use one seconds-through-day access. This
 preserves the PCF85063A's frozen calendar across rollovers, as required by
 [datasheet section 7.4](https://www.nxp.com/docs/en/data-sheet/PCF85063A.pdf).
 RTC values retain the existing local-time convention.
+
+System-to-RTC synchronization sends register 58 and all seven calendar bytes
+in one `w8@0x08` transaction. The MCU forwards the complete calendar in one
+internal-bus write, keeping the RTC counters frozen until all fields are set.
+Incomplete or overlong calendar commands and individual calendar-field writes
+are rejected without touching the RTC. Other RTC register writes are unchanged.
+The advertised firmware revision comes from the running image, not an older
+revision retained in EEPROM.
+
+The host verifies the complete calendar after writing, allowing elapsed time
+and one pending RTC tick. Failed transfers or verification leave `TIME_UNKNOWN`
+unchanged and report failure. Atomicity here prevents rollover between fields;
+it does not provide rollback after power loss or a mid-transfer electrical fault.
 
 The seconds register's oscillator-stop (OS) flag is checked before converting
 time. A flagged RTC cannot set Linux time or trigger firmware startup/shutdown

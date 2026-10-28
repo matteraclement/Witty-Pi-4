@@ -1,7 +1,7 @@
 /**
  * Firmware for WittyPi 4 L3V7
  * 
- * Revision: 8
+ * Revision: 9
  */
  
 #define SDA_PIN 2
@@ -269,8 +269,6 @@ void initializeRegisters() {
   // firmware id: 0x37 (Witty Pi 4 L3V7)
   i2cReg[I2C_ID] = 0x37;  
   
-  i2cReg[I2C_FW_REVISION] = 0x08;
-  
   i2cReg[I2C_CONF_ADDRESS] = 0x08;
 
   i2cReg[I2C_CONF_PULSE_INTERVAL] = 4;
@@ -296,6 +294,8 @@ void initializeRegisters() {
       i2cReg[i] = val;
     } 
   }
+  // Capabilities belong to this firmware, not the EEPROM from an older image.
+  i2cReg[I2C_FW_REVISION] = 0x09;
 
   // copy some EEPROM backed data to PCF85063 and LM75B
   writeToDevice(ADDRESS_LM75B, I2C_LM75B_TOS - I2C_LM75B_TEMPERATURE, &i2cReg[I2C_CONF_OVER_TEMP_POINT], 1);
@@ -614,20 +614,25 @@ boolean addressEvent(uint16_t slaveAddress, uint8_t startCount) {
 void receiveEvent(int count) {
   if (TinyWireS.available()) {
     i2cIndex = TinyWireS.read();
-    if (i2cIndex >= I2C_LM75B_TEMPERATURE && i2cIndex <= I2C_LM75B_TOS) {  // mapped to LM75B's register
-      softWireMaster.beginTransmission(ADDRESS_LM75B);
-      softWireMaster.write(i2cIndex - I2C_LM75B_TEMPERATURE);
-      if (i2cIndex == I2C_LM75B_CONF) {
-        softWireMaster.write(TinyWireS.read());
-      } else if (i2cIndex != I2C_LM75B_TEMPERATURE) {
-        softWireMaster.write(TinyWireS.read());
+    if (i2cIndex >= I2C_LM75B_TEMPERATURE && i2cIndex <= I2C_RTC_TIMER_MODE) {
+      byte address = ADDRESS_RTC;
+      byte index = i2cIndex - I2C_RTC_CTRL1;
+      byte length = 1;
+      if (i2cIndex <= I2C_LM75B_TOS) {
+        address = ADDRESS_LM75B;
+        index = i2cIndex - I2C_LM75B_TEMPERATURE;
+        length = (i2cIndex == I2C_LM75B_TEMPERATURE) ? 0 : ((i2cIndex == I2C_LM75B_CONF) ? 1 : 2);
+      } else if (i2cIndex >= I2C_RTC_SECONDS && i2cIndex <= I2C_RTC_YEARS) {
+        // Calendar writes must contain seconds through years in one access.
+        if (i2cIndex != I2C_RTC_SECONDS) return;
+        length = 7;
+      }
+      if (count != length + 1) return;
+      softWireMaster.beginTransmission(address);
+      softWireMaster.write(index);
+      while (length--) {
         softWireMaster.write(TinyWireS.read());
       }
-      softWireMaster.endTransmission();    
-    } else if (i2cIndex >= I2C_RTC_CTRL1 && i2cIndex <= I2C_RTC_TIMER_MODE) {  // mapped to RTC's register
-      softWireMaster.beginTransmission(ADDRESS_RTC);
-      softWireMaster.write(i2cIndex - I2C_RTC_CTRL1);
-      softWireMaster.write(TinyWireS.read());
       softWireMaster.endTransmission();
     } else if (i2cIndex >= I2C_CONF_ADDRESS && i2cIndex < I2C_REG_COUNT) {  // non-virtual, writable i2c register
       if (TinyWireS.available()) {

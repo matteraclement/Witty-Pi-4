@@ -382,21 +382,29 @@ net_to_system()
 system_to_rtc()
 {
   log '  Writing system time to RTC...'
-  local sys_ts=$(get_sys_timestamp)
-  local sec=$(date -d @$sys_ts +%S)
-  local min=$(date -d @$sys_ts +%M)
-  local hour=$(date -d @$sys_ts +%H)
-  local day=$(date -d @$sys_ts +%u)
-  local date=$(date -d @$sys_ts +%d)
-  local month=$(date -d @$sys_ts +%m)
-  local year=$(date -d @$sys_ts +%y)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS 58 $(dec2bcd $sec)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS 59 $(dec2bcd $min)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS 60 $(dec2bcd $hour)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS 61 $(dec2bcd $date)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS 62 $(dec2bcd $day)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS 63 $(dec2bcd $month)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS 64 $(dec2bcd $year)
+  local revision
+  revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION") || return 1
+  if [[ ! $revision =~ ^0x[0-9a-fA-F]{2}$ ]] || (( revision < 9 )); then
+    log '  Atomic RTC writes require firmware revision 9 or newer.' >&2
+    return 1
+  fi
+  local sys_ts fields
+  sys_ts=$(get_sys_timestamp) || return 1
+  fields=$(date -d "@$sys_ts" '+0x%S 0x%M 0x%H 0x%d 0x0%w 0x%m 0x%y') || return 1
+  local -a calendar
+  read -r -a calendar <<< "$fields"
+  if ! i2ctransfer -y "$I2C_BUS" "w8@$I2C_MC_ADDRESS" "$I2C_RTC_SECONDS" "${calendar[@]}"; then
+    log '  Failed to write RTC calendar.' >&2
+    return 1
+  fi
+  # The MCU acknowledges the host before completing the internal-bus write.
+  # Verify the whole calendar, allowing elapsed time and one pending RTC tick.
+  local rtc_ts end_ts
+  if ! rtc_ts=$(get_rtc_timestamp) || ! end_ts=$(get_sys_timestamp) ||
+      (( rtc_ts < sys_ts || rtc_ts > end_ts + 1 )); then
+    log '  Failed to verify RTC calendar write.' >&2
+    return 1
+  fi
   TIME_UNKNOWN=2
   log '  Done :-)'
 }

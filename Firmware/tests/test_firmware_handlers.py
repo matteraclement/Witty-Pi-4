@@ -77,7 +77,7 @@ byte readFromDevice(byte, byte index, byte count) {
 }
 void writeToDevice(byte, byte, byte*, byte) {}
 struct Eeprom {
-  byte read(byte) { return 255; }
+  byte read(byte index) { return index == I2C_FW_REVISION ? 8 : 255; }
   void update(byte, byte) {}
 } EEPROM;
 """
@@ -96,6 +96,7 @@ void coldBootReady() {
   for (byte &v : i2cReg) v=0;
   initializeRegisters();
   assert(i2cReg[I2C_ID] == EXPECTED_ID);
+  assert(i2cReg[I2C_FW_REVISION] >= 9); // Upgrade must not restore old EEPROM capabilities.
   pins[PIN_CTRL]=pins[PIN_TX_UP]=pins[PIN_BUTTON]=1;
 }
 void shortPress() {
