@@ -209,15 +209,31 @@ rtc_has_bad_time()
   fi
 }
 
+# Firmware revision 8 adds a seven-byte calendar read starting at Seconds.
+read_rtc_snapshot()
+{
+  local revision
+  revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION")
+  if [[ ! $revision =~ ^0x[0-9a-fA-F]{2}$ ]] || (( revision < 8 )); then
+    echo 'RTC snapshot requires firmware revision 8 or newer.' >&2
+    return 1
+  fi
+  i2ctransfer -y "$I2C_BUS" "w1@$I2C_MC_ADDRESS" "$I2C_RTC_SECONDS" r7
+}
+
 get_rtc_timestamp()
 {
-  sec=$(bcd2dec $((0x7F&$(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_SECONDS))))
-  min=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_MINUTES))
-  hour=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_HOURS))
-  date=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_DAYS))
-  month=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_MONTHS))
-  year=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_YEARS))
-  echo $(date --date="$year-$month-$date $hour:$min:$sec" +%s)
+  local snapshot
+  snapshot=$(read_rtc_snapshot) || return 1
+  local -a rtc
+  read -r -a rtc <<< "$snapshot"
+  local sec=$(bcd2dec $((0x7F & rtc[0])))
+  local min=$(bcd2dec "${rtc[1]}")
+  local hour=$(bcd2dec "${rtc[2]}")
+  local day=$(bcd2dec "${rtc[3]}")
+  local month=$(bcd2dec "${rtc[5]}")
+  local year=$(bcd2dec "${rtc[6]}")
+  date --date="$((2000 + year))-$month-$day $hour:$min:$sec" +%s
 }
 
 get_rtc_time()

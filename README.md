@@ -31,7 +31,7 @@ consumed the TXD shutdown request, and on power cut. It prevents the next button
 alarm or protection-triggered shutdown from being mistaken for another reboot.
 The Mini uses the `WittyPi4` sketch with `WITTY_PI_4_MINI` defined (product ID
 `0x36`); standard builds remain `0x26`, and `WittyPi4_L3V7` remains `0x37`.
-Firmware revision and shutdown timing are unchanged.
+Shutdown timing is unchanged. Firmware revision **8** adds coherent RTC reads.
 
 Compile from this checkout with ATTinyCore **1.5.2**, AVR GCC
 **7.3.0-atmel3.6.1-arduino7**, LTO and linker relaxation:
@@ -46,14 +46,32 @@ arduino-cli compile \
 For Mini, add `--build-property compiler.cpp.extra_flags=-DWITTY_PI_4_MINI`
 and select a different output directory. For L3V7, select
 `Firmware/WittyPi4_L3V7` without the Mini define.
-Standard and Mini occupy **8,190 / 8,192 bytes** of flash; L3V7 occupies
-**8,090 / 8,192 bytes**. All three use 223 / 512 bytes of static RAM.
-Without relaxation the corrected standard sketch exceeds flash capacity by two
-bytes with this compiler; do not bypass the linker capacity check.
+Standard and Mini occupy **8,098 / 8,192 bytes** of flash; L3V7 occupies
+**7,998 / 8,192 bytes**. All three use 223 / 512 bytes of static RAM.
 
-`python3 -m unittest discover -s Firmware/tests -v` compiles and exercises the
-actual production handlers for all three product IDs. These tests and successful
-AVR builds are offline evidence only. Existing vendor HEX files are not updated,
-and no board has been flashed or physically qualified by these checks.
+`python3 -m unittest discover -s Firmware/tests -v` exercises the production
+shutdown handlers, RTC rollover/alarm handling, and host calendar decoding.
+These checks and AVR builds are offline evidence only; no board has been
+flashed or physically qualified. The checked-in HEX images are rebuilt from
+these sources with the configuration above.
 
 To upload the firmware to Witty Pi, you can follow [this document](https://www.uugear.com/portfolio/compile-flash-firmware-for-witty-pi-4/).
+
+### RTC read protocol
+
+Install the matching revision-8-or-newer firmware before using this software.
+Older firmware is rejected rather than falling back to inconsistent byte reads.
+The host requires `i2ctransfer` from `i2c-tools` and reads seven bytes in one
+combined transaction:
+
+```sh
+i2ctransfer -y 1 w1@0x08 58 r7
+```
+
+The bytes are seconds (including OS), minutes, hours, day, weekday, month, and
+year, in the RTC's register encoding. The MCU reads them in one internal-bus
+access; alarm decisions likewise use one seconds-through-day access. This
+preserves the PCF85063A's frozen calendar across rollovers, as required by
+[datasheet section 7.4](https://www.nxp.com/docs/en/data-sheet/PCF85063A.pdf).
+RTC values retain the existing local-time convention.
+

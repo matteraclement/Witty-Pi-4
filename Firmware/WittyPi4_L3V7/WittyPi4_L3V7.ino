@@ -1,7 +1,7 @@
 /**
  * Firmware for WittyPi 4 L3V7
  * 
- * Revision: 7
+ * Revision: 8
  */
  
 #define SDA_PIN 2
@@ -269,7 +269,7 @@ void initializeRegisters() {
   // firmware id: 0x37 (Witty Pi 4 L3V7)
   i2cReg[I2C_ID] = 0x37;  
   
-  i2cReg[I2C_FW_REVISION] = 0x07;
+  i2cReg[I2C_FW_REVISION] = 0x08;
   
   i2cReg[I2C_CONF_ADDRESS] = 0x08;
 
@@ -568,7 +568,8 @@ float getOutputCurrent() {
 
 // get temperature
 char getTemperature() {
-  return readFromDevice(ADDRESS_LM75B, I2C_LM75B_TEMPERATURE - I2C_LM75B_TEMPERATURE);
+  readFromDevice(ADDRESS_LM75B, 0, 1);
+  return softWireMaster.read();
 }
 
 
@@ -654,7 +655,6 @@ void receiveEvent(int count) {
 
 // i2c master requests data from this device (master reads from this device)
 void requestEvent() {
-  float v = 0.0;
   switch (i2cIndex) {
     case I2C_VOLTAGE_IN_I:
       getInputVoltage();
@@ -670,24 +670,20 @@ void requestEvent() {
       break;
   }
 
-  if (i2cIndex >= I2C_LM75B_TEMPERATURE && i2cIndex <= I2C_LM75B_TOS) {  // mapped to LM75B's register
-    softWireMaster.beginTransmission(ADDRESS_LM75B);
-    softWireMaster.write(i2cIndex - I2C_LM75B_TEMPERATURE);
-    if (i2cIndex == I2C_LM75B_CONF) {
-      softWireMaster.requestFrom(ADDRESS_LM75B, 1);
-      TinyWireS.write(softWireMaster.read());
-    } else {
-      softWireMaster.requestFrom(ADDRESS_LM75B, 2);
-      TinyWireS.write(softWireMaster.read());
-      TinyWireS.write(softWireMaster.read());
-      softWireMaster.endTransmission();
+  if (i2cIndex >= I2C_LM75B_TEMPERATURE && i2cIndex <= I2C_RTC_TIMER_MODE) {
+    byte address = ADDRESS_RTC;
+    byte index = i2cIndex - I2C_RTC_CTRL1;
+    // Seconds starts a complete calendar snapshot, including weekday.
+    byte count = (i2cIndex == I2C_RTC_SECONDS) ? 7 : 1;
+    if (i2cIndex <= I2C_LM75B_TOS) {
+      address = ADDRESS_LM75B;
+      index = i2cIndex - I2C_LM75B_TEMPERATURE;
+      count = (i2cIndex == I2C_LM75B_CONF) ? 1 : 2;
     }
-  } else if (i2cIndex >= I2C_RTC_CTRL1 && i2cIndex <= I2C_RTC_TIMER_MODE) {  // mapped to RTC's register
-    softWireMaster.beginTransmission(ADDRESS_RTC);
-    softWireMaster.write(i2cIndex - I2C_RTC_CTRL1);
-    softWireMaster.requestFrom(ADDRESS_RTC, 1);
-    TinyWireS.write(softWireMaster.read());
-    softWireMaster.endTransmission();
+    readFromDevice(address, index, count);
+    while (count--) {
+      TinyWireS.write(softWireMaster.read());
+    }
   } else {
     TinyWireS.write(i2cReg[i2cIndex]);  // direct i2c register
   }
@@ -881,11 +877,12 @@ boolean canTriggerAlarm() {
 
 // process the alarm from RTC, if exists
 void processAlarmIfNeeded() {
-  // get current time from RTC
-  byte seconds = bcd2dec(readFromDevice(ADDRESS_RTC, I2C_RTC_SECONDS - I2C_RTC_CTRL1) & 0x7F);
-  byte minutes = bcd2dec(readFromDevice(ADDRESS_RTC, I2C_RTC_MINUTES - I2C_RTC_CTRL1));
-  byte hours = bcd2dec(readFromDevice(ADDRESS_RTC, I2C_RTC_HOURS - I2C_RTC_CTRL1));
-  byte date = bcd2dec(readFromDevice(ADDRESS_RTC, I2C_RTC_DAYS - I2C_RTC_CTRL1));
+  // Keep seconds through day in one RTC access across clock rollovers.
+  readFromDevice(ADDRESS_RTC, I2C_RTC_SECONDS - I2C_RTC_CTRL1, 4);
+  byte seconds = bcd2dec(softWireMaster.read() & 0x7F);
+  byte minutes = bcd2dec(softWireMaster.read());
+  byte hours = bcd2dec(softWireMaster.read());
+  byte date = bcd2dec(softWireMaster.read());
   long cur_ts = getTimestamp(date, hours, minutes, seconds);
   
   // get startup (alarm1) time
@@ -1002,14 +999,11 @@ void turnOnIfPowerOff() {
 }
 
 
-// software I2C master read data from device on internal I2C bus
-byte readFromDevice(byte address, byte index) {
+// Read one internal-bus transaction into SoftWireMaster's receive buffer.
+byte readFromDevice(byte address, byte index, byte count) {
   softWireMaster.beginTransmission(address);
   softWireMaster.write(index);
-  softWireMaster.requestFrom((int)address, 1);
-  byte data = softWireMaster.read();
-  softWireMaster.endTransmission();
-  return data;
+  return softWireMaster.requestFrom((int)address, (int)count);
 }
 
 

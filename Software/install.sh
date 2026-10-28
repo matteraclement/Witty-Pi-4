@@ -83,7 +83,7 @@ fi
 
 # install i2c-tools
 echo '>>> Install i2c-tools'
-if hash i2cget 2>/dev/null; then
+if hash i2cget 2>/dev/null && hash i2ctransfer 2>/dev/null; then
   echo 'Seems i2c-tools is installed already, skip this step.'
 else
   apt install -y i2c-tools || ((ERR++))
