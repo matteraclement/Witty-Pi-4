@@ -46,8 +46,8 @@ arduino-cli compile \
 For Mini, add `--build-property compiler.cpp.extra_flags=-DWITTY_PI_4_MINI`
 and select a different output directory. For L3V7, select
 `Firmware/WittyPi4_L3V7` without the Mini define.
-Standard and Mini occupy **8,098 / 8,192 bytes** of flash; L3V7 occupies
-**7,998 / 8,192 bytes**. All three use 223 / 512 bytes of static RAM.
+Standard and Mini occupy **8,102 / 8,192 bytes** of flash; L3V7 occupies
+**8,002 / 8,192 bytes**. All three use 223 / 512 bytes of static RAM.
 
 `python3 -m unittest discover -s Firmware/tests -v` exercises the production
 shutdown handlers, RTC rollover/alarm handling, and host calendar decoding.
@@ -74,4 +74,11 @@ access; alarm decisions likewise use one seconds-through-day access. This
 preserves the PCF85063A's frozen calendar across rollovers, as required by
 [datasheet section 7.4](https://www.nxp.com/docs/en/data-sheet/PCF85063A.pdf).
 RTC values retain the existing local-time convention.
+
+The seconds register's oscillator-stop (OS) flag is checked before converting
+time. A flagged RTC cannot set Linux time or trigger firmware startup/shutdown
+alarms. Failed RTC-to-system synchronization leaves NTP and `TIME_UNKNOWN`
+unchanged. The boot-time bad-time check includes OS as well as the existing
+zero-year initialization check; its existing system-to-RTC initialization
+policy is unchanged.
 

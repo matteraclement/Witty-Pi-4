@@ -879,7 +879,9 @@ boolean canTriggerAlarm() {
 void processAlarmIfNeeded() {
   // Keep seconds through day in one RTC access across clock rollovers.
   readFromDevice(ADDRESS_RTC, I2C_RTC_SECONDS - I2C_RTC_CTRL1, 4);
-  byte seconds = bcd2dec(softWireMaster.read() & 0x7F);
+  byte seconds = softWireMaster.read();
+  if (seconds & 0x80) return;  // oscillator stopped: no reliable alarm time
+  seconds = bcd2dec(seconds);
   byte minutes = bcd2dec(softWireMaster.read());
   byte hours = bcd2dec(softWireMaster.read());
   byte date = bcd2dec(softWireMaster.read());

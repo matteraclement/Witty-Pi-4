@@ -109,10 +109,25 @@ int main() {
   i2cReg[I2C_CONF_SECOND_ALARM2]=0x59;
   processAlarmIfNeeded();
   assert(!turningOff && clicks==0 && !i2cReg[I2C_ALARM2_TRIGGERED]);
-  // The same alarm still fires when it actually becomes due.
+  // A plausible calendar is unusable while the oscillator-stop flag is set.
+  rtc[4]=0xd9;
+  processAlarmIfNeeded();
+  assert(!turningOff && clicks==0 && !i2cReg[I2C_ALARM2_TRIGGERED]);
   rtc[4]=0x59;
   processAlarmIfNeeded();
   assert(turningOff && clicks==1 && i2cReg[I2C_ALARM2_TRIGGERED]);
+
+  powerIsOn=false;
+  i2cReg[I2C_CONF_DAY_ALARM1]=0x28;
+  i2cReg[I2C_CONF_HOUR_ALARM1]=0x12;
+  i2cReg[I2C_CONF_MINUTE_ALARM1]=0x35;
+  i2cReg[I2C_CONF_SECOND_ALARM1]=0x59;
+  rtc[4]=0xd9;
+  processAlarmIfNeeded();
+  assert(clicks==1 && !i2cReg[I2C_ALARM1_TRIGGERED]);
+  rtc[4]=0x59;
+  processAlarmIfNeeded();
+  assert(clicks==2 && i2cReg[I2C_ALARM1_TRIGGERED]);
 }
 """
 
@@ -179,6 +194,30 @@ class RtcReads(unittest.TestCase):
         result = shell("get_rtc_timestamp", "0x59 " * 7, REVISION="0x07")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
+
+
+    def test_oscillator_stop_blocks_clock_sync(self):
+        snapshot = "0xd6 0x34 0x12 0x28 0x03 0x10 0x26"
+        result = shell("rtc_has_bad_time", snapshot)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "1"))
+        result = shell("get_rtc_timestamp", snapshot)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        result = shell(
+            'calls=0; sudo() { calls=$((calls+1)); }; TIME_UNKNOWN=1; '
+            'rtc_to_system; status=$?; printf "%s %s %s\\n" '
+            '"$status" "$TIME_UNKNOWN" "$calls"', snapshot)
+        self.assertEqual(result.stdout.strip(), "1 1 0")
+
+    def test_valid_oscillator_allows_clock_sync(self):
+        snapshot = "0x56 0x34 0x12 0x28 0x03 0x10 0x26"
+        result = shell("rtc_has_bad_time", snapshot)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "0"))
+        result = shell(
+            'sudo() { if [[ $1 == date ]]; then command date -d "$3" +%s; fi; }; '
+            'TIME_UNKNOWN=1; rtc_to_system; status=$?; '
+            'printf "%s %s\\n" "$status" "$TIME_UNKNOWN"', snapshot)
+        self.assertEqual(result.stdout.strip(), "0 0")
 
 
 if __name__ == "__main__":

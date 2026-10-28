@@ -201,8 +201,11 @@ get_sys_timestamp()
 
 rtc_has_bad_time()
 {
-  year=$(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_YEARS)
-  if [[ $year -eq 0 ]]; then
+  local snapshot
+  snapshot=$(read_rtc_snapshot) || return 1
+  local -a rtc
+  read -r -a rtc <<< "$snapshot"
+  if (( (rtc[0] & 0x80) || rtc[6] == 0 )); then
     echo 1
   else
     echo 0
@@ -227,6 +230,10 @@ get_rtc_timestamp()
   snapshot=$(read_rtc_snapshot) || return 1
   local -a rtc
   read -r -a rtc <<< "$snapshot"
+  if (( rtc[0] & 0x80 )); then
+    echo 'RTC oscillator stopped; time is not reliable.' >&2
+    return 1
+  fi
   local sec=$(bcd2dec $((0x7F & rtc[0])))
   local min=$(bcd2dec "${rtc[1]}")
   local hour=$(bcd2dec "${rtc[2]}")
@@ -368,7 +375,11 @@ system_to_rtc()
 rtc_to_system()
 {
   log '  Writing RTC time to system...'
-  local rtc_ts=$(get_rtc_timestamp)
+  local rtc_ts
+  if ! rtc_ts=$(get_rtc_timestamp); then
+    log '  RTC time is unavailable or invalid; system clock unchanged.' >&2
+    return 1
+  fi
   sudo timedatectl set-ntp 0 >/dev/null
   sudo date -s @$rtc_ts >/dev/null
   TIME_UNKNOWN=0
