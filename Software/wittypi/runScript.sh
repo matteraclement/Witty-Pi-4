@@ -16,6 +16,7 @@ schedule_file="$cur_dir/schedule.wpi"
 
 # utilities
 . "$cur_dir/utilities.sh"
+legacy_alarm_owner || exit 1
 
 # pending until system time gets initialized
 while [[ "$(date +%Y)" == *"1969"* ]] || [[ "$(date +%Y)" == *"1970"* ]]; do

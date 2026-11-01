@@ -31,6 +31,7 @@ def extract(source, signature):
 STUBS = r"""
 #include <cassert>
 #include <iostream>
+#include <cstdint>
 using byte = unsigned char;
 using boolean = bool;
 #define ISR(name) void name()
@@ -43,7 +44,7 @@ unsigned int powerCutDelay, TCNT1, skipTempShutdownCount;
 unsigned int skipLowVoltageDetectCount;
 byte lowVoltageCacheInteger, lowVoltageCacheDecimal;
 int pins[12], modes[12], sleepCount;
-float voltage;
+uint16_t voltage;
 char temperature;
 int digitalRead(int pin) { return pins[pin]; }
 void digitalWrite(int pin, int value) {
@@ -51,12 +52,17 @@ void digitalWrite(int pin, int value) {
   if (pin != PIN_BUTTON || modes[pin] == OUTPUT) pins[pin] = value;
 }
 void pinMode(int pin, int mode) { modes[pin] = mode; }
+#define boardRead digitalRead
+#define boardWrite digitalWrite
+#define boardPinMode pinMode
+bool contractActive() { return false; }
+void contractInterrupted() {}
 void ledOn() { ledIsOn=true; }
 void ledOff() { ledIsOn=false; }
 void powerOn() { powerIsOn=true; pins[PIN_CTRL]=1; }
 void sleep() { ++sleepCount; } // Stop at sleep entry, before any future wake.
 void updateRegister(byte reg, byte value) { i2cReg[reg]=value; }
-float getInputVoltage() { return voltage; }
+uint16_t getInputVoltage() { return voltage; }
 char getTemperature() { return temperature; }
 bool canTriggerAlarm() { return true; }
 void reset_rtc_alarm() {}
@@ -90,7 +96,7 @@ void coldBootReady() {
   lastButton=1; lastSystemUp=0; alarm1Delayed=0;
   skipTempShutdownCount=120; skipLowVoltageDetectCount=180;
   lowVoltageCacheInteger=lowVoltageCacheDecimal=0;
-  voltage=3.0f; temperature=90;
+  voltage=3000; temperature=90;
   for (int &v : pins) v=0;
   for (int &v : modes) v=INPUT_PULLUP;
   for (byte &v : i2cReg) v=0;
@@ -210,7 +216,8 @@ class FirmwareHandlers(unittest.TestCase):
             "unsigned int getPowerCutPreloadTimer(boolean reset)",
             "ISR (PCINT0_vect)", "ISR (PCINT1_vect)", "ISR (TIM1_OVF_vect)",
             "byte bcd2dec(byte bcd)",
-            "long getTimestamp(byte date, byte hours, byte minutes, byte seconds)",
+            "uint32_t getTimestamp(uint16_t date, byte hours, byte minutes, byte seconds)",
+            "long getAlarmTimestamp(byte start)",
             "void turnOffIfPowerOn()", "void turnOnIfPowerOff()",
             "void handleTemperatureActtonsIfNeeded()", "void processAlarmIfNeeded()",
             "byte detectLowVoltage()" if name.endswith("L3V7")
@@ -222,7 +229,7 @@ class FirmwareHandlers(unittest.TestCase):
             binary = Path(directory) / "handlers"
             cpp.write_text(defines + "\n" + STUBS + handlers + SCENARIOS)
             subprocess.run([
-                *shlex.split(os.environ.get("CXX", "c++")), "-std=c++17",
+                *shlex.split(os.environ.get("CXX", "c++")), "-std=c++17", "-fsigned-char",
                 "-Wall", "-Wextra", "-Werror", f"-DEXPECTED_ID={product_id}",
                 *flags, str(cpp), "-o", str(binary),
             ], check=True)

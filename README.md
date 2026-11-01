@@ -16,6 +16,17 @@ Witty Pi 4 supports all Raspberry Pi models with 40-pin header, including A+, B+
 *   [Witty Pi 4 Product Page](https://www.uugear.com/product/witty-pi-4/)
 *   [Witty Pi 4 User Manual](https://www.uugear.com/doc/WittyPi4_UserManual.pdf)
 
+### Scheduled shutdown contract (software 4.24, firmware 10)
+
+The new `scheduled-rev10` profile adds a controller-owned 60/120-second shutdown
+contract, exact cycle messages, late filesystem completion and a retained EEPROM
+outcome. The normal target is 60 seconds after the buffered ON boundary; 120 seconds
+is the total emergency limit. Register 21 retains its older 25-second maximum for
+manual and protection paths. See the [protocol and qualification boundary](Firmware/scheduled-contract.md).
+Installing software does not flash a board or qualify its timing. Independent
+scheduled enforcement requires explicit UTC migration and matching downstream
+integration. Native Raspberry Pi behavior and older WP4 profiles are unchanged.
+
 ### Immutable vendor releases
 
 [`release/`](release/) contains portable WP4 inputs for downstream integration:
@@ -31,7 +42,7 @@ limitations; it is not a dump or attestation of any installed board. The second
 contains the reboot/shutdown-state correction, coherent RTC reads, oscillator
 validity and transport-failure handling, and atomic calendar writes. The
 `ca63d2145fa2` bundle packages that same host software and firmware from the
-commit introducing release tooling. All bundles declare software **4.23**:
+commit introducing release tooling. These historical bundles declare software **4.23**:
 that version alone does not identify a release. None establishes deployment
 or physical qualification.
 
@@ -83,7 +94,7 @@ The manifest continues to identify the source commit used for the build. That
 artifact-only commit keeps the checkout clean and does not require another
 release; otherwise packaging would create an endless commit/release loop.
 
-This defaults to committed `HEAD`, profile `atomic-rev9`, output `release/` and
+This defaults to committed `HEAD`, profile `scheduled-rev10`, output `release/` and
 rebuilding all three variants. `REF=<commit>`, `OUTPUT=/path/to/releases` and
 `ARDUINO_CLI=/path/to/arduino-cli` override the source, destination and toolchain;
 `PYTHON=/path/to/python3` selects Python. The release tool does not install packages
@@ -100,9 +111,8 @@ Use `OUTPUT=/path/to/new-release-root` for a separate export. The underlying
 `python3 tools/release.py create --ref <commit> --profile <profile>` interface
 remains available; omitting its `--rebuild` flag archives committed artifacts and
 explicitly records `archived-not-rebuilt`, not source-to-binary verification.
-`make release` always rebuilds `atomic-rev9` and archives `legacy-rev7`. Profile
-selection is an explicit maintainer review, not automatic ABI discovery. Only the
-two listed protocol profiles are supported. Publication happens after verification;
+`make release` rebuilds `atomic-rev9` and `scheduled-rev10`, and archives `legacy-rev7`. Profile
+selection is an explicit maintainer review, not automatic ABI discovery. Only these three explicitly named protocol profiles are supported. Publication happens after verification;
 failed builds leave no final release. Retain old directories while devices or
 rollback plans need them; never edit a published bundle or choose a board's input
 by "newest".

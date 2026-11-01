@@ -102,6 +102,9 @@ bool canTriggerAlarm() { return true; }
 void emulateButtonClick() { ++clicks; }
 void reset_rtc_alarm() {}
 void copyAlarm(byte) {}
+bool contractActive() { return false; }
+void contractReply() {}
+void contractReceive(int) {}
 """
 
 SCENARIOS = r"""
@@ -293,7 +296,7 @@ def compile_rtc(directory, variant, scenarios):
         source, re.MULTILINE))
     handlers = "\n".join(extract(source, signature) for signature in (
         "byte readFromDevice(", "void writeToDevice(", "byte bcd2dec(",
-        "long getTimestamp(", "void processAlarmIfNeeded()",
+        "uint32_t getTimestamp(", "long getAlarmTimestamp(", "void processAlarmIfNeeded()",
         "void requestEvent()", "void receiveEvent("))
     cpp = directory / "rtc.cpp"
     cpp.write_text(PERIPHERAL +
@@ -301,11 +304,22 @@ def compile_rtc(directory, variant, scenarios):
         defines + "\n" + HANDLER_STUBS + handlers + scenarios)
     binary = directory / "rtc"
     subprocess.run([
-        *shlex.split(os.environ.get("CXX", "c++")), "-std=c++17",
+        *shlex.split(os.environ.get("CXX", "c++")), "-std=c++17", "-fsigned-char",
         "-O2", "-I", str(directory), str(cpp), "-o", str(binary)], check=True)
     return binary
 
 class RtcReads(unittest.TestCase):
+    def test_managed_utc_profile_is_independent_of_host_timezone_and_rejects_legacy_edits(self):
+        result = shell(r'''
+i2cget() { if [[ $4 == 13 ]]; then echo 0x01; else echo 0x0a; fi; }
+export TZ=Europe/Paris
+get_rtc_timestamp
+if set_startup_time 2 12 0 0; then exit 9; fi
+if set_shutdown_time 2 12 0 0; then exit 10; fi
+''', '0x00 0x00 0x12 0x01 0x00 0x11 0x26')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), '1793534400')
+
     def test_rollovers_through_firmware_and_host(self):
         expected = ["2026-10-28 12:34:59", "2026-10-28 23:59:59",
                     "2026-12-31 23:59:59", "2024-02-28 23:59:59"]

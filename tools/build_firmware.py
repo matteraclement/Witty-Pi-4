@@ -23,6 +23,21 @@ VARIANTS = (
 )
 
 
+def build_properties(name: str, scheduled_contract: bool) -> list[str]:
+    """Exact, reviewed flags; older immutable source keeps its original build."""
+    flags = ["compiler.c.elf.extra_flags=-Wl,--relax"]
+    cpp = []
+    if scheduled_contract:
+        cpp.extend(("-mcall-prologues", "-fno-inline-small-functions",
+                    "-fno-inline-functions-called-once", "-fno-tree-dominator-opts",
+                    "-finline-limit=3"))
+    if name == "mini":
+        cpp.append("-DWITTY_PI_4_MINI")
+    if cpp:
+        flags.append("compiler.cpp.extra_flags=" + " ".join(cpp))
+    return flags
+
+
 def _run(command: list[str]) -> subprocess.CompletedProcess:
     try:
         result = subprocess.run(
@@ -154,9 +169,7 @@ def build_firmware(source: Path, output: Path, arduino_cli: str) -> dict:
             if not (sketch / f"{sketch_name}.ino").is_file():
                 raise RuntimeError(f"Missing firmware sketch: {sketch}")
             build_path = work / name
-            flags = ["compiler.c.elf.extra_flags=-Wl,--relax"]
-            if name == "mini":
-                flags.append("compiler.cpp.extra_flags=-DWITTY_PI_4_MINI")
+            flags = build_properties(name, (sketch / "ScheduledContract.h").is_file())
             command = [
                 arduino_cli, "compile", "--fqbn", FQBN, "--clean",
                 "--build-path", str(build_path),

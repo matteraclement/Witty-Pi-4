@@ -1,9 +1,10 @@
 /**
  * Firmware for WittyPi 4
  * 
- * Revision: 9
+ * Revision: 10
  */
  
+#define I2C_TIMEOUT 2
 #define SDA_PIN 2
 #define SDA_PORT PORTB
 #define SCL_PIN 0
@@ -171,7 +172,7 @@ volatile boolean wakeupByWatchdog = false;
 
 volatile boolean ledIsOn = false;
 
-volatile unsigned int powerCutDelay = 0;
+volatile byte powerCutDelay = 0;
 
 volatile boolean isButtonClickEmulated = false;
 
@@ -202,20 +203,30 @@ volatile byte lowVoltageCacheDecimal = 0;
 SoftWireMaster softWireMaster;  // software I2C master
 
 
+#include "BoardPins.h"
+
+void contractSetup();
+void contractPoll();
+void contractReceive(int count);
+void contractReply();
+void contractInterrupted();
+boolean contractActive();
+
 void setup() {
+  TOCPMCOE = 0; // Dedicated controller timers never drive compare-output pins.
   // initialize software I2C master
   softWireMaster.begin();
 
   // initialize pin states and make sure power is cut
-  pinMode(PIN_SYS_UP, INPUT);
-  pinMode(PIN_BUTTON, INPUT_PULLUP);
-  pinMode(PIN_CTRL, OUTPUT);
-  pinMode(PIN_TX_UP, INPUT);
-  pinMode(PIN_VIN, INPUT);
-  pinMode(PIN_VOUT, INPUT);
-  pinMode(PIN_VK, INPUT);
-  pinMode(PIN_SDA, INPUT_PULLUP);
-  pinMode(PIN_SCL, INPUT_PULLUP);
+  boardPinMode(PIN_SYS_UP, INPUT);
+  boardPinMode(PIN_BUTTON, INPUT_PULLUP);
+  boardPinMode(PIN_CTRL, OUTPUT);
+  boardPinMode(PIN_TX_UP, INPUT);
+  boardPinMode(PIN_VIN, INPUT);
+  boardPinMode(PIN_VOUT, INPUT);
+  boardPinMode(PIN_VK, INPUT);
+  boardPinMode(PIN_SDA, INPUT_PULLUP);
+  boardPinMode(PIN_SCL, INPUT_PULLUP);
   cutPower();
 
   // use internal 1.1V reference
@@ -223,6 +234,7 @@ void setup() {
 
   // initlize registers
   initializeRegisters();
+  contractSetup();
 
   // i2c initialization
   TinyWireS.begin((i2cReg[I2C_CONF_ADDRESS] <= 0x07 || i2cReg[I2C_CONF_ADDRESS] >= 0x78) ? 0x08 : i2cReg[I2C_CONF_ADDRESS]);
@@ -297,7 +309,7 @@ void initializeRegisters() {
     } 
   }
   // Capabilities belong to this firmware, not the EEPROM from an older image.
-  i2cReg[I2C_FW_REVISION] = 0x09;
+  i2cReg[I2C_FW_REVISION] = 0x0A;
 
   // copy some EEPROM backed data to PCF85063 and LM75B
   writeToDevice(ADDRESS_LM75B, I2C_LM75B_TOS - I2C_LM75B_TEMPERATURE, &i2cReg[I2C_CONF_OVER_TEMP_POINT], 1);
@@ -364,11 +376,11 @@ void sleep() {
       if (guaranteedWakeThreshold > 0) {
         guaranteedWakeCounter ++;
         if (guaranteedWakeCounter >= guaranteedWakeThreshold * ((i2cReg[I2C_CONF_GUARANTEED_WAKE] & 0x80) > 0 ? 86400 : 3600)) {
-          float vin = updatePowerMode();
+          uint16_t vin = updatePowerMode();
           if (i2cReg[I2C_POWER_MODE] == 0) {
             guaranteedWake = true;
           } else {
-            float vrec = (i2cReg[I2C_CONF_RECOVERY_VOLTAGE] == 255) ? 0.0f : ((float)i2cReg[I2C_CONF_RECOVERY_VOLTAGE]) / 10;
+            uint16_t vrec = (i2cReg[I2C_CONF_RECOVERY_VOLTAGE] == 255) ? 0 : ((uint16_t)i2cReg[I2C_CONF_RECOVERY_VOLTAGE]) * 100;
             if (vin >= vrec) {
               guaranteedWake = true;
             } else {
@@ -397,20 +409,20 @@ void sleep() {
         // dummy load
         if (i2cReg[I2C_CONF_DUMMY_LOAD] > 0) {
           byte ms = i2cReg[I2C_CONF_DUMMY_LOAD];
-          digitalWrite(PIN_CTRL, 1);
+          boardWrite(PIN_CTRL, 1);
           delay(ms);
           cutPower();
         }
 
         // update power mode and get input voltage
-        float vin = updatePowerMode();
+        uint16_t vin = updatePowerMode();
   
         // check input voltage if shutdown because of low voltage, and recovery voltage has been set
         // will skip checking I2C_LV_SHUTDOWN if I2C_CONF_LOW_VOLTAGE is set to 0xFF
         if ((i2cReg[I2C_POWER_MODE] == 1 || i2cReg[I2C_CONF_IGNORE_POWER_MODE] == 1) 
             && (i2cReg[I2C_LV_SHUTDOWN] == 1 || i2cReg[I2C_CONF_LOW_VOLTAGE] == 255 || i2cReg[I2C_CONF_IGNORE_LV_SHUTDOWN] == 1) 
             && i2cReg[I2C_CONF_RECOVERY_VOLTAGE] != 255) {
-          float vrec = ((float)i2cReg[I2C_CONF_RECOVERY_VOLTAGE]) / 10;
+          uint16_t vrec = ((uint16_t)i2cReg[I2C_CONF_RECOVERY_VOLTAGE]) * 100;
           if (vin >= vrec) {
             wakeupByWatchdog = false;       // recovery from low voltage shutdown
             updateRegister(I2C_ACTION_REASON, REASON_VOLTAGE_RESTORE);
@@ -441,7 +453,8 @@ void sleep() {
 // cut 5V output on GPIO header 
 void cutPower() {
   powerIsOn = false;
-  digitalWrite(PIN_CTRL, 0);
+  boardWrite(PIN_CTRL, 0);
+  contractInterrupted();
   turnOffFromTXD = false;
 }
 
@@ -452,7 +465,7 @@ void powerOn() {
   skipTempShutdownCount = 0;
   guaranteedWakeCounter = 0;
   skipLowVoltageDetectCount = 0;
-  digitalWrite(PIN_CTRL, 1);
+  boardWrite(PIN_CTRL, 1);
   updatePowerMode();
 }
 
@@ -460,80 +473,85 @@ void powerOn() {
 // turn on white LED
 void ledOn() {
   ledIsOn = true;
-  pinMode(PIN_LED, OUTPUT);
-  digitalWrite(PIN_LED, 1);
+  boardPinMode(PIN_LED, OUTPUT);
+  boardWrite(PIN_LED, 1);
   ledUpTime = 0;
 }
 
 
 // turn off white LED
 void ledOff() {
-  digitalWrite(PIN_LED, 0);
-  pinMode(PIN_LED, INPUT);
+  boardWrite(PIN_LED, 0);
+  boardPinMode(PIN_LED, INPUT);
   ledIsOn = false;
 }
 
 
+uint16_t adjusted(uint16_t raw, int16_t delta) {
+  return delta < 0 && raw < (uint16_t)-delta ? 0 : raw + delta;
+}
+
+uint16_t scaledAdc(byte pin, uint16_t fullScale) {
+  return ((uint32_t)fullScale * analogRead(pin)) / 1023;
+}
+
 // get voltage at specific pin
-float getAdcVoltageAtPin(byte pin) {
-  return 0.061290322580645 * analogRead(pin);    // 57*1.1/1023~=0.06129
+uint16_t getAdcVoltageAtPin(byte pin) {
+  return scaledAdc(pin, 62700);    // 57*1.1/1023~=0.06129
 }
 
 
 // get voltage at cathode
-float getCathVoltage() {
-  return 0.001075268817204 * analogRead(PIN_VK);   // 1.1/1023~=0.001075  
+uint16_t getCathVoltage() {
+  return scaledAdc(PIN_VK, 1100);   // 1.1/1023~=0.001075
 }
 
 
 // get actual adjust value for given register
-float getAdjustValue(byte regId) {
-  return (float)((char)i2cReg[regId]) / 100.0f;
+int16_t getAdjustValue(byte regId) {
+  return (int16_t)((char)i2cReg[regId]) * 10;
 }
 
 
 // update power mode according to input voltage, and return the input voltage
-float updatePowerMode() {
+uint16_t updatePowerMode() {
   byte bk = ADCSRA;
   ADCSRA |= _BV(ADEN);
-  float vin = getAdcVoltageAtPin(PIN_VIN);
+  uint16_t vin = getAdcVoltageAtPin(PIN_VIN);
   ADCSRA = bk;  
-  updateRegister(I2C_POWER_MODE, (vin > 5.25f) ? 1 : 0);
+  updateRegister(I2C_POWER_MODE, (vin > 5250) ? 1 : 0);
   return vin;
 }
 
 
 // get input voltage
-float getInputVoltage() {
+uint16_t getInputVoltage() {
   if (lowVoltageCacheInteger == 0) {
-    float v = getAdcVoltageAtPin(PIN_VIN);
-    v += getAdjustValue(I2C_CONF_ADJ_VIN);
-    updateRegister(I2C_VOLTAGE_IN_I, getIntegerPart(v));
-    updateRegister(I2C_VOLTAGE_IN_D, getDecimalPart(v));
+    uint16_t v = getAdcVoltageAtPin(PIN_VIN);
+    v = adjusted(v, getAdjustValue(I2C_CONF_ADJ_VIN));
+    updateMeasurement(I2C_VOLTAGE_IN_I, v);
     return v;
   } else {
-    return (float)lowVoltageCacheInteger + ((float)lowVoltageCacheDecimal) / 100;
+    return (uint16_t)lowVoltageCacheInteger * 1000 + (uint16_t)lowVoltageCacheDecimal * 10;
   }
 }
 
 
 // get output voltage
-float getOutputVoltage() {
-  float v = getAdcVoltageAtPin(PIN_VOUT);
-  float vk = getCathVoltage();
-  v = v - vk + getAdjustValue(I2C_CONF_ADJ_VOUT);
-  updateRegister(I2C_VOLTAGE_OUT_I, getIntegerPart(v));
-  updateRegister(I2C_VOLTAGE_OUT_D, getDecimalPart(v));
+uint16_t getOutputVoltage() {
+  uint16_t v = getAdcVoltageAtPin(PIN_VOUT);
+  uint16_t vk = getCathVoltage();
+  v = adjusted(v, getAdjustValue(I2C_CONF_ADJ_VOUT) - vk);
+  updateMeasurement(I2C_VOLTAGE_OUT_I, v);
   return v;
 }
 
 
 // get output current
-float getOutputCurrent() {
-  float v = getCathVoltage();
-  float i = v / 0.05 + getAdjustValue(I2C_CONF_ADJ_IOUT);
-  updateRegister(I2C_CURRENT_OUT_I, getIntegerPart(i));
-  updateRegister(I2C_CURRENT_OUT_D, getDecimalPart(i));
+uint16_t getOutputCurrent() {
+  uint16_t v = scaledAdc(PIN_VK, 22000);
+  uint16_t i = adjusted(v, getAdjustValue(I2C_CONF_ADJ_IOUT));
+  updateMeasurement(I2C_CURRENT_OUT_I, i);
   return i;
 }
 
@@ -545,15 +563,20 @@ char getTemperature() {
 }
 
 
+void updateMeasurement(byte index, uint16_t value) {
+  updateRegister(index, value / 1000);
+  updateRegister(index + 1, (value / 10) % 100);
+}
+
 // get integer part of given number
-byte getIntegerPart(float v) {
-  return (byte)v;  
+byte getIntegerPart(uint16_t v) {
+  return v / 1000;
 }
 
 
 // get decimal part of given number
-byte getDecimalPart(float v) {
-  return (byte)((v - getIntegerPart(v)) * 100);
+byte getDecimalPart(uint16_t v) {
+  return (v / 10) % 100;
 }
 
 
@@ -562,7 +585,7 @@ unsigned int getPowerCutPreloadTimer(boolean reset) {
   if (reset) {
     powerCutDelay = i2cReg[I2C_CONF_POWER_CUT_DELAY];
   }
-  unsigned int actualDelay = 0;
+  byte actualDelay = 0;
   if (powerCutDelay > 83) {
     actualDelay = 83;
   } else {
@@ -586,6 +609,7 @@ boolean addressEvent(uint16_t slaveAddress, uint8_t startCount) {
 void receiveEvent(int count) {
   if (TinyWireS.available()) {
     i2cIndex = TinyWireS.read();
+    if (i2cIndex == 72) { contractReceive(count); return; }
     if (i2cIndex >= I2C_LM75B_TEMPERATURE && i2cIndex <= I2C_RTC_TIMER_MODE) {
       byte address = ADDRESS_RTC;
       byte index = i2cIndex - I2C_RTC_CTRL1;
@@ -632,6 +656,7 @@ void receiveEvent(int count) {
 
 // i2c master requests data from this device (master reads from this device)
 void requestEvent() {
+  if (i2cIndex == 73) { contractReply(); return; }
   switch (i2cIndex) {
     case I2C_VOLTAGE_IN_I:
       getInputVoltage();
@@ -663,13 +688,14 @@ void requestEvent() {
       TinyWireS.write(softWireMaster.read());
     }
   } else {
-    TinyWireS.write(i2cReg[i2cIndex]);  // direct i2c register
+    TinyWireS.write((byte)i2cIndex < I2C_REG_COUNT ? i2cReg[(byte)i2cIndex] : 0xFF);  // bounded register
   }
 }
 
 
 // watchdog interrupt routine
 ISR (WDT_vect) {
+  contractPoll();
   // turn off white LED after delay
   ledUpTime++;
   if (ledUpTime == 3) {
@@ -706,7 +732,8 @@ ISR (WDT_vect) {
 
 // pin state change interrupt routine for PCINT0_vect (PCINT0~7) 
 ISR (PCINT0_vect) {
-  if (digitalRead(PIN_TX_UP) == 1) {
+  if (contractActive()) return; // TXD cannot complete or renew a scheduled contract.
+  if (boardRead(PIN_TX_UP) == 1) {
     if (!listenToTxd) {
       // start listen to TXD pin;
       listenToTxd = true;
@@ -726,14 +753,14 @@ ISR (PCINT0_vect) {
 
 // pin state change interrupt routine for PCINT1_vect (PCINT8~15)
 ISR (PCINT1_vect) {
-  byte button = digitalRead(PIN_BUTTON);
-  byte systemUp = digitalRead(PIN_SYS_UP);
+  byte button = boardRead(PIN_BUTTON);
+  byte systemUp = boardRead(PIN_SYS_UP);
 
   if (button != lastButton) {
     if (button == 0) {   // button is pressed, PCINT9
       // restore from emulated button clicking
-      digitalWrite(PIN_BUTTON, 1);
-      pinMode(PIN_BUTTON, INPUT_PULLUP);
+      boardWrite(PIN_BUTTON, 1);
+      boardPinMode(PIN_BUTTON, INPUT_PULLUP);
       
       // turn on the white LED
       ledOn();
@@ -744,7 +771,7 @@ ISR (PCINT1_vect) {
           updateRegister(I2C_ACTION_REASON, REASON_CLICK);
         }
         if (powerIsOn) {
-          if (systemIsUp) {
+          if (systemIsUp && !(contractActive() && isButtonClickEmulated && i2cReg[I2C_ACTION_REASON] == REASON_ALARM2)) {
             turningOff = true;
             systemIsUp = false;
           }
@@ -782,7 +809,7 @@ ISR (TIM1_OVF_vect) {
     TCNT1 = getPowerCutPreloadTimer(true);
     forcePowerCutIfNeeded();
     if (turningOff) {
-      if (turnOffFromTXD && digitalRead(PIN_TX_UP) == 1) {  // if it is rebooting
+      if (turnOffFromTXD && boardRead(PIN_TX_UP) == 1) {  // if it is rebooting
         turningOff = false;
         turnOffFromTXD = false; // reboot consumed this TXD shutdown
         updateRegister(I2C_ACTION_REASON, REASON_REBOOT);
@@ -801,8 +828,8 @@ ISR (TIM1_OVF_vect) {
 
 // update I2C register and save to EEPROM
 void updateRegister(byte index, byte value) {
-  i2cReg[index] = value;
   if (index < I2C_REG_COUNT) {
+    i2cReg[index] = value;
     EEPROM.update(index, value);
   }
 }
@@ -811,16 +838,16 @@ void updateRegister(byte index, byte value) {
 // emulate button clicking
 void emulateButtonClick() {
   isButtonClickEmulated = true;
-  pinMode(PIN_BUTTON, OUTPUT);
-  digitalWrite(PIN_BUTTON, 0);
+  boardPinMode(PIN_BUTTON, OUTPUT);
+  boardWrite(PIN_BUTTON, 0);
 }
 
 
 // temporarily turn on ADC to get input voltage 
-float turnOnAdcAndGetInputVoltage() {
+uint16_t turnOnAdcAndGetInputVoltage() {
   byte bk = ADCSRA;
   ADCSRA |= _BV(ADEN);
-  float vin = getInputVoltage();
+  uint16_t vin = getInputVoltage();
   ADCSRA = bk;
   return vin;
 }
@@ -831,11 +858,11 @@ boolean canTriggerAlarm() {
   if (powerIsOn || i2cReg[I2C_POWER_MODE] == 0) {
     return true;
   }
-  float vin = turnOnAdcAndGetInputVoltage();
-  float vlow = ((float)i2cReg[I2C_CONF_LOW_VOLTAGE]) / 10;
+  uint16_t vin = turnOnAdcAndGetInputVoltage();
+  uint16_t vlow = ((uint16_t)i2cReg[I2C_CONF_LOW_VOLTAGE]) * 100;
   if (i2cReg[I2C_LV_SHUTDOWN] == 1) {
     if (vin > vlow) {
-      float vrec = ((float)i2cReg[I2C_CONF_RECOVERY_VOLTAGE]) / 10;
+      uint16_t vrec = ((uint16_t)i2cReg[I2C_CONF_RECOVERY_VOLTAGE]) * 100;
       if (i2cReg[I2C_CONF_RECOVERY_VOLTAGE] == 255 || vin > vrec) {
         return true;
       }
@@ -864,54 +891,36 @@ void processAlarmIfNeeded() {
   byte date = bcd2dec(softWireMaster.read());
   long cur_ts = getTimestamp(date, hours, minutes, seconds);
   
-  // get startup (alarm1) time
-  seconds = bcd2dec(i2cReg[I2C_CONF_SECOND_ALARM1]);
-  minutes = bcd2dec(i2cReg[I2C_CONF_MINUTE_ALARM1]);
-  hours = bcd2dec(i2cReg[I2C_CONF_HOUR_ALARM1]);
-  date = bcd2dec(i2cReg[I2C_CONF_DAY_ALARM1]);
-  long alarm1_ts = getTimestamp(date, hours, minutes, seconds);
-
-  // get shutdown (alarm2) time
-  seconds = bcd2dec(i2cReg[I2C_CONF_SECOND_ALARM2]);
-  minutes = bcd2dec(i2cReg[I2C_CONF_MINUTE_ALARM2]);
-  hours = bcd2dec(i2cReg[I2C_CONF_HOUR_ALARM2]);
-  date = bcd2dec(i2cReg[I2C_CONF_DAY_ALARM2]);
-  long alarm2_ts = getTimestamp(date, hours, minutes, seconds);
-
   boolean canTrigger = canTriggerAlarm();
-  boolean alarm1HasTriggered = (alarm1_ts == 0 || i2cReg[I2C_ALARM1_TRIGGERED] == 1);
-  boolean alarm2HasTriggered = (alarm2_ts == 0 || i2cReg[I2C_ALARM2_TRIGGERED] == 1);
-
-  long overdue_alarm1 = cur_ts - alarm1_ts;
-  long overdue_alarm2 = cur_ts - alarm2_ts;
-  
-  if (canTrigger && !alarm1HasTriggered && overdue_alarm1 >= 0 && overdue_alarm1 < 2) {  // Alarm 1: startup
-    updateRegister(I2C_ALARM1_TRIGGERED, 1);
-    updateRegister(I2C_CONF_FLAG_ALARM1, 1);
-    if (!powerIsOn) {
-      updateRegister(I2C_ACTION_REASON, REASON_ALARM1);
-      emulateButtonClick();
-    } else {
-      // power is not cut yet, will power on later if alarm1 delay is allowed
-      if ((i2cReg[I2C_CONF_MISC] & 0x01) == 0) {
-        alarm1Delayed = 1;
+  byte prepare = 0;
+  for (byte alarm=0; alarm<2; ++alarm) {
+    byte offset = I2C_CONF_SECOND_ALARM1 + alarm*5;
+    long alarm_ts = getAlarmTimestamp(offset);
+    if (alarm_ts == 0 || i2cReg[I2C_ALARM1_TRIGGERED + alarm]) continue;
+    long overdue = cur_ts - alarm_ts;
+    if (canTrigger && overdue >= 0 && overdue < 2) {
+      updateRegister(I2C_ALARM1_TRIGGERED + alarm, 1);
+      updateRegister(I2C_CONF_FLAG_ALARM1 + alarm, 1);
+      if (alarm == 0) {
+        if (powerIsOn) {
+          if (!(i2cReg[I2C_CONF_MISC] & 1)) alarm1Delayed = 1;
+        } else {
+          updateRegister(I2C_ACTION_REASON, REASON_ALARM1);
+          emulateButtonClick();
+        }
+      } else if (powerIsOn && !turningOff && !contractActive()) {
+        updateRegister(I2C_ACTION_REASON, REASON_ALARM2);
+        emulateButtonClick();
+        turningOff = true;
+        systemIsUp = false;
       }
+      return;
     }
-  } else if (canTrigger && !alarm2HasTriggered && overdue_alarm2 >= 0 && overdue_alarm2 < 2) {  // Alarm 2: shutdown
-    updateRegister(I2C_ALARM2_TRIGGERED, 1);
-    updateRegister(I2C_CONF_FLAG_ALARM2, 1);
-    if (powerIsOn && !turningOff) {
-      updateRegister(I2C_ACTION_REASON, REASON_ALARM2);
-      emulateButtonClick();
-      turningOff = true;
-      systemIsUp = false;
-    }
-  } else if (!alarm1HasTriggered && overdue_alarm1 < 0 && overdue_alarm1 >= -2) {
+    if (!prepare && overdue < 0 && overdue >= -2) prepare = offset;
+  }
+  if (prepare) {
     reset_rtc_alarm();
-    copyAlarm(I2C_CONF_SECOND_ALARM1);
-  } else if (!alarm2HasTriggered && overdue_alarm2 < 0 && overdue_alarm2 >= -2) {
-    reset_rtc_alarm();
-    copyAlarm(I2C_CONF_SECOND_ALARM2);
+    copyAlarm(prepare);
   }
 }
 
@@ -938,24 +947,19 @@ void handleTemperatureActtonsIfNeeded() {
     skipTempShutdownCount ++;
   }
   char t = getTemperature();
-  char ot = i2cReg[I2C_CONF_OVER_TEMP_POINT];
-  char ht = i2cReg[I2C_CONF_BELOW_TEMP_POINT];
-  if (t > ot) {
-    if (i2cReg[I2C_CONF_OVER_TEMP_ACTION] == 1) {
-      updateRegister(I2C_ACTION_REASON, REASON_OVER_TEMPERATURE);
-      turnOffIfPowerOn();
-    } else if (i2cReg[I2C_CONF_OVER_TEMP_ACTION] == 2) {
-      updateRegister(I2C_ACTION_REASON, REASON_OVER_TEMPERATURE);
-      turnOnIfPowerOff();
-    }
-  } else if (t < ht) {
-    if (i2cReg[I2C_CONF_BELOW_TEMP_ACTION] == 1) {
-      updateRegister(I2C_ACTION_REASON, REASON_BELOW_TEMPERATURE);
-      turnOffIfPowerOn();
-    } else if (i2cReg[I2C_CONF_BELOW_TEMP_ACTION] == 2) {
-      updateRegister(I2C_ACTION_REASON, REASON_BELOW_TEMPERATURE);
-      turnOnIfPowerOff();
-    }
+  byte action = 0;
+  byte reason = 0;
+  if (t > (char)i2cReg[I2C_CONF_OVER_TEMP_POINT]) {
+    action = i2cReg[I2C_CONF_OVER_TEMP_ACTION];
+    reason = REASON_OVER_TEMPERATURE;
+  } else if (t < (char)i2cReg[I2C_CONF_BELOW_TEMP_POINT]) {
+    action = i2cReg[I2C_CONF_BELOW_TEMP_ACTION];
+    reason = REASON_BELOW_TEMPERATURE;
+  }
+  if (action == 1 || action == 2) {
+    updateRegister(I2C_ACTION_REASON, reason);
+    if (action == 1) turnOffIfPowerOn();
+    else turnOnIfPowerOff();
   }
 }
 
@@ -972,8 +976,8 @@ void processLowVoltageIfNeeded() {
       && (i2cReg[I2C_POWER_MODE] == 1 || i2cReg[I2C_CONF_IGNORE_POWER_MODE] == 1)
       && (i2cReg[I2C_LV_SHUTDOWN] == 0 || i2cReg[I2C_CONF_IGNORE_LV_SHUTDOWN] == 1)
       && i2cReg[I2C_CONF_LOW_VOLTAGE] != 255) {
-    float vin = getInputVoltage();
-    float vlow = ((float)i2cReg[I2C_CONF_LOW_VOLTAGE]) / 10;
+    uint16_t vin = getInputVoltage();
+    uint16_t vlow = ((uint16_t)i2cReg[I2C_CONF_LOW_VOLTAGE]) * 100;
     if (vin < vlow) {  // input voltage is below the low voltage threshold
       lowVoltageCacheInteger = i2cReg[I2C_VOLTAGE_IN_I];
       lowVoltageCacheDecimal = i2cReg[I2C_VOLTAGE_IN_D];
@@ -1030,15 +1034,20 @@ byte bcd2dec(byte bcd) {
 }
 
 
+long getAlarmTimestamp(byte start) {
+  return getTimestamp(bcd2dec(i2cReg[start + 3]), bcd2dec(i2cReg[start + 2]),
+    bcd2dec(i2cReg[start + 1]), bcd2dec(i2cReg[start]));
+}
+
 // get timestamp for given date and time
-long getTimestamp(byte date, byte hours, byte minutes, byte seconds) {
-  return (long)date * 86400 + (long)hours * 3600 + (long)minutes * 60 + seconds;
+uint32_t getTimestamp(uint16_t date, byte hours, byte minutes, byte seconds) {
+  return (((uint32_t)date * 24 + hours) * 60 + minutes) * 60 + seconds;
 }
 
 
 // force power cut, if button is pressed and hold for a few seconds
 void forcePowerCutIfNeeded() {
- if (buttonPressed && digitalRead(PIN_BUTTON) == 0) {
+ if (buttonPressed && boardRead(PIN_BUTTON) == 0) {
     systemIsUp = false;
     cutPower();
     sleep();
@@ -1056,11 +1065,11 @@ void adjustRTCIfNeeded() {
       char t = getTemperature();
       char adj = 0;
       if (t < 26) {
-        adj = (t - 26) * 0.126728111f;
+        adj = (t - 26) * 55 / 434;
       } else if (t > 32 && t <= 42) {
-        adj = (t - 32) * -0.092165899f;
+        adj = 0;
       } else if (t > 42) {
-        adj = -0.921658986f + (t - 42) * -0.276497696f;
+        adj = (-200 - (t - 42) * 60) / 217;
       }
       byte data = value2Offset(offset2Value(i2cReg[I2C_CONF_RTC_OFFSET]) + adj);
       writeToDevice(ADDRESS_RTC, I2C_RTC_OFFSET - I2C_RTC_CTRL1, &data, 1);
@@ -1089,3 +1098,5 @@ byte value2Offset(char value) {
     return (0x80 + value);
   }
 }
+
+#include "ScheduledContract.h"

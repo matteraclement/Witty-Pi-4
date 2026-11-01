@@ -1,6 +1,6 @@
 PYTHON ?= python3
 REF ?= HEAD
-PROFILE ?= atomic-rev9
+PROFILE ?= scheduled-rev10
 OUTPUT ?= release
 ARDUINO_CLI ?= arduino-cli
 
@@ -9,7 +9,7 @@ ARDUINO_CLI ?= arduino-cli
 # Current firmware is rebuilt; the historical profile preserves its original HEX.
 release:
 	$(PYTHON) tools/release.py create --ref "$(REF)" --profile "$(PROFILE)" \
-		--output "$(OUTPUT)" $(if $(filter atomic-rev9,$(PROFILE)),--rebuild) \
+		--output "$(OUTPUT)" $(if $(filter atomic-rev9 scheduled-rev10,$(PROFILE)),--rebuild) \
 		--arduino-cli "$(ARDUINO_CLI)"
 
 verify:

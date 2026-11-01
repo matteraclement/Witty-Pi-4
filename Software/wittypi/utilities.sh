@@ -119,7 +119,7 @@ if [ -z ${I2C_MC_ADDRESS+x} ]; then
 
   TIME_UNKNOWN=0
 
-  SOFTWARE_VERSION='4.23'
+  SOFTWARE_VERSION='4.24'
 fi
 
 
@@ -239,6 +239,30 @@ read_rtc_snapshot()
   echo "$snapshot"
 }
 
+# A revision-10 board retains an explicit UTC mode. Reading it never changes
+# the calendar. Migration must first disarm and then rewrite/verify the RTC.
+rtc_contract_mode()
+{
+  local revision mode
+  revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION") || return 1
+  [[ $revision =~ ^0x[0-9a-fA-F]{2}$ ]] || return 1
+  if (( revision < 10 )); then echo 0; return; fi
+  (( revision == 10 )) || return 1
+  mode=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" 13) || return 1
+  [[ $mode =~ ^0x0[01]$ ]] || return 1
+  echo "$((mode))"
+}
+
+legacy_alarm_owner()
+{
+  local mode
+  mode=$(rtc_contract_mode) || return 1
+  if [[ $mode != 0 ]]; then
+    echo 'Legacy alarm editing is disabled in the managed UTC contract profile.' >&2
+    return 1
+  fi
+}
+
 get_rtc_timestamp()
 {
   local snapshot
@@ -268,7 +292,13 @@ get_rtc_timestamp()
   local day=$(bcd2dec "${rtc[3]}")
   local month=$(bcd2dec "${rtc[5]}")
   local year=$(bcd2dec "${rtc[6]}")
-  date --date="$((2000 + year))-$month-$day $hour:$min:$sec" +%s
+  local mode
+  mode=$(rtc_contract_mode) || return 1
+  if [[ $mode == 1 ]]; then
+    date -u --date="$((2000 + year))-$month-$day $hour:$min:$sec" +%s
+  else
+    date --date="$((2000 + year))-$month-$day $hour:$min:$sec" +%s
+  fi
 }
 
 get_rtc_time()
@@ -320,6 +350,7 @@ get_startup_time()
 
 set_startup_time()
 {
+  legacy_alarm_owner || return 1
   sec=$(dec2bcd $4)
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM1 $sec
   min=$(dec2bcd $3)
@@ -332,6 +363,7 @@ set_startup_time()
 
 clear_startup_time()
 {
+  legacy_alarm_owner || return 1
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM1 0x00
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_MINUTE_ALARM1 0x00
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_HOUR_ALARM1 0x00
@@ -349,6 +381,7 @@ get_shutdown_time()
 
 set_shutdown_time()
 {
+  legacy_alarm_owner || return 1
   sec=$(dec2bcd $4)
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM2 $sec
   min=$(dec2bcd $3)
@@ -361,6 +394,7 @@ set_shutdown_time()
 
 clear_shutdown_time()
 {
+  legacy_alarm_owner || return 1
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM2 0x00
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_MINUTE_ALARM2 0x00
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_HOUR_ALARM2 0x00
@@ -388,9 +422,14 @@ system_to_rtc()
     log '  Atomic RTC writes require firmware revision 9 or newer.' >&2
     return 1
   fi
-  local sys_ts fields
+  local sys_ts fields mode
+  mode=$(rtc_contract_mode) || return 1
   sys_ts=$(get_sys_timestamp) || return 1
-  fields=$(date -d "@$sys_ts" '+0x%S 0x%M 0x%H 0x%d 0x0%w 0x%m 0x%y') || return 1
+  if [[ $mode == 1 ]]; then
+    fields=$(date -u -d "@$sys_ts" '+0x%S 0x%M 0x%H 0x%d 0x0%w 0x%m 0x%y') || return 1
+  else
+    fields=$(date -d "@$sys_ts" '+0x%S 0x%M 0x%H 0x%d 0x0%w 0x%m 0x%y') || return 1
+  fi
   local -a calendar
   read -r -a calendar <<< "$fields"
   if ! i2ctransfer -y "$I2C_BUS" "w8@$I2C_MC_ADDRESS" "$I2C_RTC_SECONDS" "${calendar[@]}"; then

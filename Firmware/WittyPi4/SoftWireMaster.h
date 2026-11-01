@@ -32,7 +32,7 @@
 // WIRE_HAS_END means Wire has end()
 #define WIRE_HAS_END 1
 
-class SoftWireMaster : public Stream
+class SoftWireMaster
 {
 private:
   uint8_t rxBuffer[BUFFER_LENGTH];
@@ -195,7 +195,7 @@ public:
 
   inline size_t write(int n) { return write((uint8_t)n); }
 
-  using Print::write;
+
 };
 
 

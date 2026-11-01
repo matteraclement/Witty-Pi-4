@@ -15,6 +15,8 @@ import tarfile
 import tempfile
 import zlib
 
+from build_firmware import build_properties
+
 
 class ReleaseError(RuntimeError):
     """An input or artifact cannot safely be released."""
@@ -34,6 +36,16 @@ PROFILES = {
         "rtc_writes": "atomic 7-byte calendar (minimum revision 9)",
         "revision_source": "running image",
         "rtc_time_convention": "local time (unchanged)",
+    },
+    "scheduled-rev10": {
+        "nominal_revision": 10,
+        "rtc_reads": "coherent 7-byte (minimum revision 8)",
+        "rtc_writes": "atomic 7-byte calendar (minimum revision 9)",
+        "revision_source": "running image",
+        "rtc_time_convention": "explicit UTC profile required for scheduled contract",
+        "shutdown_contract": "scheduled-shutdown-v1; normal 60s, emergency 120s",
+        "outcome_retention": "32-slot EEPROM journal with CRC8 and commit markers",
+        "completion_evidence": "late host readonly-mount report; not kernel-halt evidence",
     },
 }
 BUILD_FQBN = (
@@ -285,9 +297,7 @@ def verify_receipt(receipt, manifest, bundle):
         for key in ("command", "build_properties"):
             require(isinstance(item.get(key), list) and bool(item[key]) and
                     all(isinstance(value, str) for value in item[key]), f"Missing build {key}")
-        properties = ["compiler.c.elf.extra_flags=-Wl,--relax"]
-        if expected["name"] == "mini":
-            properties.append("compiler.cpp.extra_flags=-DWITTY_PI_4_MINI")
+        properties = build_properties(expected["name"], manifest["profile"] == "scheduled-rev10")
         require(item["build_properties"] == properties, "Wrong build properties")
         command = item["command"]
         require(len(command) >= 5 and command[1:4] == ["compile", "--fqbn", BUILD_FQBN] and
@@ -314,7 +324,7 @@ def verify_bundle(bundle):
             all(provenance.get(key) == value for key, value in PROVENANCE.items()), "Invalid provenance metadata")
     require(manifest.get("qualification") == QUALIFICATION, "Unsupported qualification claims")
     rebuilt = provenance["build"] == "rebuilt-byte-identical"
-    require(not rebuilt or profile == "atomic-rev9", "Legacy images are archived, not rebuilt")
+    require(not rebuilt or profile in ("atomic-rev9", "scheduled-rev10"), "Legacy images are archived, not rebuilt")
     expected = BASE_ARTIFACTS | ({"build-verification.json"} if rebuilt else set())
     artifacts = manifest.get("artifacts")
     require(isinstance(artifacts, dict), "Missing artifacts")
@@ -360,7 +370,7 @@ def create_release(repo, ref, profile, output=None, rebuild=False, arduino_cli="
     source, files = committed_snapshot(repo, ref)
     version = metadata(files, profile)
     variants = variant_metadata(files)
-    require(not rebuild or profile == "atomic-rev9", "Historical legacy-rev7 images must be archived without rebuilding")
+    require(not rebuild or profile in ("atomic-rev9", "scheduled-rev10"), "Historical legacy-rev7 images must be archived without rebuilding")
     name = f"wp4-{version}-fw{PROFILES[profile]['nominal_revision']}-{source['commit'][:12]}"
     root = Path(output) if output is not None else repo / "release"
     root.mkdir(parents=True, exist_ok=True)

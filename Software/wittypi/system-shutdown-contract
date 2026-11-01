@@ -1,0 +1,7 @@
+#!/bin/sh
+# Install as /lib/systemd/system-shutdown/wp4-contract with the matching helper
+# at /usr/lib/wittypi/shutdown_contract.py. Only the final poweroff phase may
+# assert the visible-filesystems-readonly completion condition.
+case "$1" in
+  poweroff) exec /usr/bin/timeout --signal=KILL 2 /usr/bin/python3 -B /usr/lib/wittypi/shutdown_contract.py late-completion ;;
+esac
