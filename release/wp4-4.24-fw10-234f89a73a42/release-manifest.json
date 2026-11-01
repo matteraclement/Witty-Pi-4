@@ -1,0 +1,269 @@
+{
+  "artifacts": {
+    "LICENSE": {
+      "sha256": "5115b09da5646768cddd055ec1db3ee350bf0c40320e588ce10b9c2a3adf6f47",
+      "size_bytes": 1078
+    },
+    "WittyPi4.ino.hex": {
+      "sha256": "adf91f26e0ea578ed566c65f4a248a1b9558733b71bd84ec1c74bfb77585473d",
+      "size_bytes": 22500
+    },
+    "WittyPi4_L3V7.ino.hex": {
+      "sha256": "7c8524b529a327ff0ebecdba54f7a4521a3d364a976b6d28b358c9ea35cbf29f",
+      "size_bytes": 22404
+    },
+    "WittyPi4_Mini.ino.hex": {
+      "sha256": "7d68e080c7f776a7005daf4b20778310287e348a9d109f916dec745939266551",
+      "size_bytes": 22500
+    },
+    "build-verification.json": {
+      "sha256": "c2d3001257bfa036ed38f3a0baa6ceb1b7ad1201b1352a458bdd3d90d8342483",
+      "size_bytes": 13928
+    },
+    "source.tar.gz": {
+      "sha256": "c6a1cc2eea2efc98a417b6073888338722fa2e90533f6f9116728be8bc01fe71",
+      "size_bytes": 137670
+    },
+    "wittypi-software.tar.gz": {
+      "sha256": "b3fe6997c3bcd070aa8f014c961c3d35662d55d27ef766bce3f35eaa523d3a53",
+      "size_bytes": 19316
+    }
+  },
+  "compatibility": {
+    "completion_evidence": "late host readonly-mount report; not kernel-halt evidence",
+    "nominal_revision": 10,
+    "outcome_retention": "32-slot EEPROM journal with CRC8 and commit markers",
+    "revision_source": "running image",
+    "rtc_reads": "coherent 7-byte (minimum revision 8)",
+    "rtc_time_convention": "explicit UTC profile required for scheduled contract",
+    "rtc_writes": "atomic 7-byte calendar (minimum revision 9)",
+    "shutdown_contract": "scheduled-shutdown-v1; normal 60s, emergency 120s"
+  },
+  "profile": "scheduled-rev10",
+  "project": "Witty-Pi-4",
+  "provenance": {
+    "authenticity": "Checksums detect corruption, not authenticity; consumers must pin the manifest SHA256.",
+    "binary": "unchanged committed Intel HEX blobs",
+    "build": "rebuilt-byte-identical",
+    "profile": "explicit maintainer-reviewed metadata; not automatic ABI discovery",
+    "source": "committed Git blobs; no working-tree inputs"
+  },
+  "qualification": {
+    "deployment": "not established",
+    "hardware": "not established",
+    "runtime_identity": "Product/revision does not prove an exact Git build."
+  },
+  "release_name": "wp4-4.24-fw10-234f89a73a42",
+  "schema_version": 1,
+  "software_version": "4.24",
+  "source": {
+    "commit": "234f89a73a427ed67515e21ae076aa508a3b2314",
+    "commit_timestamp": 1793539701,
+    "files": {
+      "Firmware/WittyPi4/BoardPins.h": {
+        "git_blob": "16bc45b05731b7df9e1682ffe3f6019ae9283a7e",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4/ScheduledContract.h": {
+        "git_blob": "870d750759a0505e9b04c6e031cd8f1a5821a82c",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4/SoftIICMaster.h": {
+        "git_blob": "a0f3a9015feacec5831cf982a98461f8118ed915",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4/SoftWireMaster.h": {
+        "git_blob": "7ff21a61fa9522aa0ac1634d491272d648cea945",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4/WittyPi4.ino": {
+        "git_blob": "ec557b573be688ab23a0bd3d19798c0d33d40828",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4/WittyPi4.ino.hex": {
+        "git_blob": "d7645555d39ad23736d8f596edaf8a0c2e62ed00",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4/WittyPi4_Mini.ino.hex": {
+        "git_blob": "f9d5559b2fa03ec19bab7d7dbcc4ced2f8205cff",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4_Arduino_Settings.png": {
+        "git_blob": "c49a7016fc183c898cd97f2ee590f15a055456c6",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4_L3V7/BoardPins.h": {
+        "git_blob": "16bc45b05731b7df9e1682ffe3f6019ae9283a7e",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4_L3V7/ScheduledContract.h": {
+        "git_blob": "870d750759a0505e9b04c6e031cd8f1a5821a82c",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4_L3V7/SoftIICMaster.h": {
+        "git_blob": "a0f3a9015feacec5831cf982a98461f8118ed915",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4_L3V7/SoftWireMaster.h": {
+        "git_blob": "7ff21a61fa9522aa0ac1634d491272d648cea945",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4_L3V7/WittyPi4_L3V7.ino": {
+        "git_blob": "9c077d4b9b0e8cfaa6295dcb052c637505e880c1",
+        "git_mode": "100644"
+      },
+      "Firmware/WittyPi4_L3V7/WittyPi4_L3V7.ino.hex": {
+        "git_blob": "50c13f20e48503d0a3f9d8e191acfdac9437e8ee",
+        "git_mode": "100644"
+      },
+      "Firmware/scheduled-contract.md": {
+        "git_blob": "7e27f4488bf21c856bc3d50e6cbf61cc18a9745d",
+        "git_mode": "100644"
+      },
+      "Firmware/tests/shutdown_contract.cpp": {
+        "git_blob": "bf686800fd18e15e5e15db942aa9f30b274aefb0",
+        "git_mode": "100644"
+      },
+      "Firmware/tests/test_board_pins.py": {
+        "git_blob": "3e6230b5f758e796580ceee0cb25761a5dd67778",
+        "git_mode": "100644"
+      },
+      "Firmware/tests/test_contract_host.py": {
+        "git_blob": "1ce393d995c73a8e01c28478d3bea1df60de12a7",
+        "git_mode": "100644"
+      },
+      "Firmware/tests/test_firmware_handlers.py": {
+        "git_blob": "22e3d095d64449a109d7378c9403737b5966db29",
+        "git_mode": "100644"
+      },
+      "Firmware/tests/test_numeric_profile.py": {
+        "git_blob": "feb2a29bb32d683c67f9de1381d4f65db6e1ea80",
+        "git_mode": "100644"
+      },
+      "Firmware/tests/test_rtc.py": {
+        "git_blob": "abd8951dc665ac0fb25bbb79947b230ba354ec77",
+        "git_mode": "100644"
+      },
+      "Firmware/tests/test_shutdown_contract.py": {
+        "git_blob": "00cf0b3eb35a076d32a9b68756cf291138a5f618",
+        "git_mode": "100644"
+      },
+      "LICENSE": {
+        "git_blob": "e01c4a52dd90195359f2b11d605ea00112b0e0e9",
+        "git_mode": "100644"
+      },
+      "README.md": {
+        "git_blob": "0686723fb13591860d4ee3c22637f70681af8c9c",
+        "git_mode": "100644"
+      },
+      "Software/install.sh": {
+        "git_blob": "fdbb7978922b3654e3ed309d9f6144f9b72036f4",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/afterStartup.sh": {
+        "git_blob": "36b965f6bae7132275019d573c983e9617f8305e",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/beforeScript.sh": {
+        "git_blob": "43c8cb39827b635d6f6410f7b3a9a07b06f584f0",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/beforeShutdown.sh": {
+        "git_blob": "ebc4e1db6043855178c68492ffc9b7eb7de88bbf",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/daemon.sh": {
+        "git_blob": "3cb232c9c4e8a0872777305edd0cac07c02cf524",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/init.sh": {
+        "git_blob": "c4d6c0f34d2e43c7bb753de5a6e43afd9f227005",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/runScript.sh": {
+        "git_blob": "444757fbda8689a0aadb07c103fd11282c51b6c4",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/schedules/README": {
+        "git_blob": "6e539720b665610126be33b254083cefaf21b1a7",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/schedules/on_10m_every_2h.wpi": {
+        "git_blob": "56ac8917ccd6f566ae997e51722219c5a513e45e",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/schedules/on_1h_every_2d.wpi": {
+        "git_blob": "cd30cbd9a142c64339054ad098eab2334f05ed42",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/schedules/on_2m_every_3m.wpi": {
+        "git_blob": "b1ade9553db52933bb9f80f0dad3ee66ccfd5efe",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/schedules/on_30m_everyday_but_weekend.wpi": {
+        "git_blob": "b4d0c91326b79c277fc36925976d1ee928164e96",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/schedules/on_5m_every_20m.wpi": {
+        "git_blob": "9eab5a79482300fd71fb4e51c909e64b794b4aab",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/schedules/turn_on_every_hour.wpi": {
+        "git_blob": "eac5b2fbd317d98cc768d0567e712d8eeb7e9dcc",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/shutdown_contract.py": {
+        "git_blob": "65747f8d3b5a9780a17758e499ac8a527089102f",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/system-shutdown-contract": {
+        "git_blob": "6348a8748bce2fc1957e3799558de7014dd81fb1",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/utilities.sh": {
+        "git_blob": "151261643694e5c91e34062de24181f8f27aabfb",
+        "git_mode": "100755"
+      },
+      "Software/wittypi/wittyPi.sh": {
+        "git_blob": "143093dd86a246e5f1b32e885669a2d7ffe00528",
+        "git_mode": "100755"
+      }
+    },
+    "tree": "f936972724aec1d1ad2ec9800b0ff3a96b04a8ca"
+  },
+  "variants": [
+    {
+      "artifact": "WittyPi4.ino.hex",
+      "flash": {
+        "address_span_bytes": 8172,
+        "capacity_bytes": 8192,
+        "data_bytes": 8172
+      },
+      "name": "standard",
+      "product_id": "0x26",
+      "source_path": "Firmware/WittyPi4/WittyPi4.ino.hex"
+    },
+    {
+      "artifact": "WittyPi4_Mini.ino.hex",
+      "flash": {
+        "address_span_bytes": 8172,
+        "capacity_bytes": 8192,
+        "data_bytes": 8172
+      },
+      "name": "mini",
+      "product_id": "0x36",
+      "source_path": "Firmware/WittyPi4/WittyPi4_Mini.ino.hex"
+    },
+    {
+      "artifact": "WittyPi4_L3V7.ino.hex",
+      "flash": {
+        "address_span_bytes": 8136,
+        "capacity_bytes": 8192,
+        "data_bytes": 8136
+      },
+      "name": "l3v7",
+      "product_id": "0x37",
+      "source_path": "Firmware/WittyPi4_L3V7/WittyPi4_L3V7.ino.hex"
+    }
+  ]
+}

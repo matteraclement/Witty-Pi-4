@@ -1,0 +1,250 @@
+{
+  "fqbn": "ATTinyCore:avr:attinyx41:chip=841,clock=8internal,pinmapping=old,LTO=enable,wiremode=slave,neopixelport=porta,millis=disabled,eesave=aenable,bod=2v7,bodact=enabled,bodpd=enabled",
+  "schema_version": 1,
+  "source_commit": "234f89a73a427ed67515e21ae076aa508a3b2314",
+  "status": "verified-build",
+  "toolchain": {
+    "arduino_cli": {
+      "command": [
+        "/tmp/dynapi-avr-tools/arduino-cli",
+        "version",
+        "--format",
+        "json"
+      ],
+      "version": "1.5.1"
+    },
+    "avr_gcc": {
+      "compiler_sha256": "202f388482ac4dee07329cdbe8889ceebd68e7164a120fca71f755b751f8837c",
+      "compiler_version": "avr-gcc (GCC) 7.3.0",
+      "path": "/root/.arduino15/packages/arduino/tools/avr-gcc/7.3.0-atmel3.6.1-arduino7/bin/avr-gcc",
+      "version": "7.3.0-atmel3.6.1-arduino7"
+    },
+    "core": {
+      "id": "ATTinyCore:avr",
+      "path": "/root/.arduino15/packages/ATTinyCore/hardware/avr/1.5.2",
+      "platform_sha256": "0a2d742cfd104553f1ec98d208458da80707a0baa409306103c5567786796b1d",
+      "version": "1.5.2"
+    }
+  },
+  "variants": [
+    {
+      "artifact_hex_line_endings": "LF",
+      "build_properties": [
+        "compiler.c.elf.extra_flags=-Wl,--relax",
+        "compiler.cpp.extra_flags=-mcall-prologues -fno-inline-small-functions -fno-inline-functions-called-once -fno-tree-dominator-opts -finline-limit=3"
+      ],
+      "build_stderr": "",
+      "build_stdout": "Sketch uses 8172 bytes (99%) of program storage space. Maximum is 8192 bytes.\nGlobal variables use 209 bytes (40%) of dynamic memory, leaving 303 bytes for local variables. Maximum is 512 bytes.\n",
+      "command": [
+        "/tmp/dynapi-avr-tools/arduino-cli",
+        "compile",
+        "--fqbn",
+        "ATTinyCore:avr:attinyx41:chip=841,clock=8internal,pinmapping=old,LTO=enable,wiremode=slave,neopixelport=porta,millis=disabled,eesave=aenable,bod=2v7,bodact=enabled,bodpd=enabled",
+        "--clean",
+        "--build-path",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/build/.build-hsgut6vt/standard",
+        "--build-property",
+        "compiler.c.elf.extra_flags=-Wl,--relax",
+        "--build-property",
+        "compiler.cpp.extra_flags=-mcall-prologues -fno-inline-small-functions -fno-inline-functions-called-once -fno-tree-dominator-opts -finline-limit=3",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/source/Firmware/WittyPi4"
+      ],
+      "compiler_hex_line_endings": "CRLF",
+      "compiler_hex_sha256": "c0a21fd08142082474d83643c0fba05e13947d4f99c5acb38efa8544293bd0bf",
+      "compiler_hex_size_bytes": 23013,
+      "elf_sha256": "8ed66dafbf7a428d4a144ccf016d2695114e8da2dff13fbb90feeb92be26ed5c",
+      "flash_bytes": 8172,
+      "flash_capacity_bytes": 8192,
+      "hex_file": "WittyPi4.ino.hex",
+      "name": "standard",
+      "product_id": "0x26",
+      "properties_command": [
+        "/tmp/dynapi-avr-tools/arduino-cli",
+        "compile",
+        "--fqbn",
+        "ATTinyCore:avr:attinyx41:chip=841,clock=8internal,pinmapping=old,LTO=enable,wiremode=slave,neopixelport=porta,millis=disabled,eesave=aenable,bod=2v7,bodact=enabled,bodpd=enabled",
+        "--clean",
+        "--build-path",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/build/.build-hsgut6vt/standard",
+        "--build-property",
+        "compiler.c.elf.extra_flags=-Wl,--relax",
+        "--build-property",
+        "compiler.cpp.extra_flags=-mcall-prologues -fno-inline-small-functions -fno-inline-functions-called-once -fno-tree-dominator-opts -finline-limit=3",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/source/Firmware/WittyPi4",
+        "--show-properties=expanded"
+      ],
+      "ram_capacity_bytes": 512,
+      "sections": {
+        ".bss": 191,
+        ".comment": 17,
+        ".data": 18,
+        ".debug_abbrev": 4120,
+        ".debug_aranges": 504,
+        ".debug_frame": 2548,
+        ".debug_info": 22685,
+        ".debug_line": 9394,
+        ".debug_loc": 11173,
+        ".debug_ranges": 440,
+        ".debug_str": 7759,
+        ".note.gnu.avr.deviceinfo": 60,
+        ".text": 8154
+      },
+      "sha256": "adf91f26e0ea578ed566c65f4a248a1b9558733b71bd84ec1c74bfb77585473d",
+      "size_bytes": 22500,
+      "size_command": [
+        "/root/.arduino15/packages/arduino/tools/avr-gcc/7.3.0-atmel3.6.1-arduino7/bin/avr-size",
+        "-A",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/build/.build-hsgut6vt/standard/WittyPi4.ino.elf"
+      ],
+      "size_stdout": "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/build/.build-hsgut6vt/standard/WittyPi4.ino.elf  :\nsection                     size      addr\n.data                         18   8388864\n.text                       8154         0\n.bss                         191   8388882\n.comment                      17         0\n.note.gnu.avr.deviceinfo      60         0\n.debug_aranges               504         0\n.debug_info                22685         0\n.debug_abbrev               4120         0\n.debug_line                 9394         0\n.debug_frame                2548         0\n.debug_str                  7759         0\n.debug_loc                 11173         0\n.debug_ranges                440         0\nTotal                      67063\n\n\n",
+      "sketch": "Firmware/WittyPi4",
+      "static_ram_bytes": 209
+    },
+    {
+      "artifact_hex_line_endings": "LF",
+      "build_properties": [
+        "compiler.c.elf.extra_flags=-Wl,--relax",
+        "compiler.cpp.extra_flags=-mcall-prologues -fno-inline-small-functions -fno-inline-functions-called-once -fno-tree-dominator-opts -finline-limit=3 -DWITTY_PI_4_MINI"
+      ],
+      "build_stderr": "",
+      "build_stdout": "Sketch uses 8172 bytes (99%) of program storage space. Maximum is 8192 bytes.\nGlobal variables use 209 bytes (40%) of dynamic memory, leaving 303 bytes for local variables. Maximum is 512 bytes.\n",
+      "command": [
+        "/tmp/dynapi-avr-tools/arduino-cli",
+        "compile",
+        "--fqbn",
+        "ATTinyCore:avr:attinyx41:chip=841,clock=8internal,pinmapping=old,LTO=enable,wiremode=slave,neopixelport=porta,millis=disabled,eesave=aenable,bod=2v7,bodact=enabled,bodpd=enabled",
+        "--clean",
+        "--build-path",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/build/.build-hsgut6vt/mini",
+        "--build-property",
+        "compiler.c.elf.extra_flags=-Wl,--relax",
+        "--build-property",
+        "compiler.cpp.extra_flags=-mcall-prologues -fno-inline-small-functions -fno-inline-functions-called-once -fno-tree-dominator-opts -finline-limit=3 -DWITTY_PI_4_MINI",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/source/Firmware/WittyPi4"
+      ],
+      "compiler_hex_line_endings": "CRLF",
+      "compiler_hex_sha256": "acecf0397b5b30a382b6709c9bef0d6e3602689c4bd45f8fa276c56bde5c2634",
+      "compiler_hex_size_bytes": 23013,
+      "elf_sha256": "aa6f7d9142abdc64b39ee351d31fa7a3e4e6cf34e6a871d5f59d30f9ba208d10",
+      "flash_bytes": 8172,
+      "flash_capacity_bytes": 8192,
+      "hex_file": "WittyPi4_Mini.ino.hex",
+      "name": "mini",
+      "product_id": "0x36",
+      "properties_command": [
+        "/tmp/dynapi-avr-tools/arduino-cli",
+        "compile",
+        "--fqbn",
+        "ATTinyCore:avr:attinyx41:chip=841,clock=8internal,pinmapping=old,LTO=enable,wiremode=slave,neopixelport=porta,millis=disabled,eesave=aenable,bod=2v7,bodact=enabled,bodpd=enabled",
+        "--clean",
+        "--build-path",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/build/.build-hsgut6vt/mini",
+        "--build-property",
+        "compiler.c.elf.extra_flags=-Wl,--relax",
+        "--build-property",
+        "compiler.cpp.extra_flags=-mcall-prologues -fno-inline-small-functions -fno-inline-functions-called-once -fno-tree-dominator-opts -finline-limit=3 -DWITTY_PI_4_MINI",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/source/Firmware/WittyPi4",
+        "--show-properties=expanded"
+      ],
+      "ram_capacity_bytes": 512,
+      "sections": {
+        ".bss": 191,
+        ".comment": 17,
+        ".data": 18,
+        ".debug_abbrev": 4120,
+        ".debug_aranges": 504,
+        ".debug_frame": 2548,
+        ".debug_info": 22685,
+        ".debug_line": 9394,
+        ".debug_loc": 11173,
+        ".debug_ranges": 440,
+        ".debug_str": 7759,
+        ".note.gnu.avr.deviceinfo": 60,
+        ".text": 8154
+      },
+      "sha256": "7d68e080c7f776a7005daf4b20778310287e348a9d109f916dec745939266551",
+      "size_bytes": 22500,
+      "size_command": [
+        "/root/.arduino15/packages/arduino/tools/avr-gcc/7.3.0-atmel3.6.1-arduino7/bin/avr-size",
+        "-A",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/build/.build-hsgut6vt/mini/WittyPi4.ino.elf"
+      ],
+      "size_stdout": "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/build/.build-hsgut6vt/mini/WittyPi4.ino.elf  :\nsection                     size      addr\n.data                         18   8388864\n.text                       8154         0\n.bss                         191   8388882\n.comment                      17         0\n.note.gnu.avr.deviceinfo      60         0\n.debug_aranges               504         0\n.debug_info                22685         0\n.debug_abbrev               4120         0\n.debug_line                 9394         0\n.debug_frame                2548         0\n.debug_str                  7759         0\n.debug_loc                 11173         0\n.debug_ranges                440         0\nTotal                      67063\n\n\n",
+      "sketch": "Firmware/WittyPi4",
+      "static_ram_bytes": 209
+    },
+    {
+      "artifact_hex_line_endings": "LF",
+      "build_properties": [
+        "compiler.c.elf.extra_flags=-Wl,--relax",
+        "compiler.cpp.extra_flags=-mcall-prologues -fno-inline-small-functions -fno-inline-functions-called-once -fno-tree-dominator-opts -finline-limit=3"
+      ],
+      "build_stderr": "",
+      "build_stdout": "Sketch uses 8136 bytes (99%) of program storage space. Maximum is 8192 bytes.\nGlobal variables use 209 bytes (40%) of dynamic memory, leaving 303 bytes for local variables. Maximum is 512 bytes.\n",
+      "command": [
+        "/tmp/dynapi-avr-tools/arduino-cli",
+        "compile",
+        "--fqbn",
+        "ATTinyCore:avr:attinyx41:chip=841,clock=8internal,pinmapping=old,LTO=enable,wiremode=slave,neopixelport=porta,millis=disabled,eesave=aenable,bod=2v7,bodact=enabled,bodpd=enabled",
+        "--clean",
+        "--build-path",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/build/.build-hsgut6vt/l3v7",
+        "--build-property",
+        "compiler.c.elf.extra_flags=-Wl,--relax",
+        "--build-property",
+        "compiler.cpp.extra_flags=-mcall-prologues -fno-inline-small-functions -fno-inline-functions-called-once -fno-tree-dominator-opts -finline-limit=3",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/source/Firmware/WittyPi4_L3V7"
+      ],
+      "compiler_hex_line_endings": "CRLF",
+      "compiler_hex_sha256": "7dff546ece4c6a44a2ca7bf90b2a98683f110bd998c14916d2e6759d465d7642",
+      "compiler_hex_size_bytes": 22915,
+      "elf_sha256": "24ca5ecf1f52a6cbffde1293d5345d42779063904c5f84b57a7d55317a947ade",
+      "flash_bytes": 8136,
+      "flash_capacity_bytes": 8192,
+      "hex_file": "WittyPi4_L3V7.ino.hex",
+      "name": "l3v7",
+      "product_id": "0x37",
+      "properties_command": [
+        "/tmp/dynapi-avr-tools/arduino-cli",
+        "compile",
+        "--fqbn",
+        "ATTinyCore:avr:attinyx41:chip=841,clock=8internal,pinmapping=old,LTO=enable,wiremode=slave,neopixelport=porta,millis=disabled,eesave=aenable,bod=2v7,bodact=enabled,bodpd=enabled",
+        "--clean",
+        "--build-path",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/build/.build-hsgut6vt/l3v7",
+        "--build-property",
+        "compiler.c.elf.extra_flags=-Wl,--relax",
+        "--build-property",
+        "compiler.cpp.extra_flags=-mcall-prologues -fno-inline-small-functions -fno-inline-functions-called-once -fno-tree-dominator-opts -finline-limit=3",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/source/Firmware/WittyPi4_L3V7",
+        "--show-properties=expanded"
+      ],
+      "ram_capacity_bytes": 512,
+      "sections": {
+        ".bss": 191,
+        ".comment": 17,
+        ".data": 18,
+        ".debug_abbrev": 4120,
+        ".debug_aranges": 504,
+        ".debug_frame": 2572,
+        ".debug_info": 22670,
+        ".debug_line": 9380,
+        ".debug_loc": 11169,
+        ".debug_ranges": 440,
+        ".debug_str": 7786,
+        ".note.gnu.avr.deviceinfo": 60,
+        ".text": 8118
+      },
+      "sha256": "7c8524b529a327ff0ebecdba54f7a4521a3d364a976b6d28b358c9ea35cbf29f",
+      "size_bytes": 22404,
+      "size_command": [
+        "/root/.arduino15/packages/arduino/tools/avr-gcc/7.3.0-atmel3.6.1-arduino7/bin/avr-size",
+        "-A",
+        "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/build/.build-hsgut6vt/l3v7/WittyPi4_L3V7.ino.elf"
+      ],
+      "size_stdout": "/workspace/dynapi/Witty-Pi-4/release/.wp4-stage-z1npssnx/build/.build-hsgut6vt/l3v7/WittyPi4_L3V7.ino.elf  :\nsection                     size      addr\n.data                         18   8388864\n.text                       8118         0\n.bss                         191   8388882\n.comment                      17         0\n.note.gnu.avr.deviceinfo      60         0\n.debug_aranges               504         0\n.debug_info                22670         0\n.debug_abbrev               4120         0\n.debug_line                 9380         0\n.debug_frame                2572         0\n.debug_str                  7786         0\n.debug_loc                 11169         0\n.debug_ranges                440         0\nTotal                      67045\n\n\n",
+      "sketch": "Firmware/WittyPi4_L3V7",
+      "static_ram_bytes": 209
+    }
+  ]
+}

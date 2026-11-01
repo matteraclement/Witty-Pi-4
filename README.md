@@ -33,6 +33,7 @@ integration. Native Raspberry Pi behavior and older WP4 profiles are unchanged.
 
 | Bundle | Source commit | Firmware | Build evidence |
 | --- | --- | --- | --- |
+| [`wp4-4.24-fw10-234f89a73a42`](release/wp4-4.24-fw10-234f89a73a42/) | `234f89a73a42` | Revision 10, `scheduled-rev10` | All three pinned AVR rebuilds match committed HEX; standard/Mini 8172 bytes, L3V7 8136 bytes, each 209 bytes static RAM |
 | [`wp4-4.23-fw7-d466cbc18aae`](release/wp4-4.23-fw7-d466cbc18aae/) | `d466cbc18aaea619c1f41ddb170789a661be3338` | Revision 7, `legacy-rev7` | Original committed HEX files, archived without rebuilding |
 | [`wp4-4.23-fw9-8159567738cd`](release/wp4-4.23-fw9-8159567738cd/) | `8159567738cd020110f778a60e9f605ad37b56bf` | Revision 9, `atomic-rev9` | All three variants rebuilt with the pinned toolchain; LF-normalized HEX files match the committed files byte-for-byte |
 | [`wp4-4.23-fw9-ca63d2145fa2`](release/wp4-4.23-fw9-ca63d2145fa2/) | `ca63d2145fa2826c455d6a690f52cfb8d085775c` | Revision 9, `atomic-rev9` | Fresh three-variant rebuild from the committed release-tooling revision; firmware hashes unchanged from `8159567` |
