@@ -47,6 +47,7 @@ retained trust is not backported to those bundles.
 
 | Bundle | Source commit | Firmware | Build evidence |
 | --- | --- | --- | --- |
+| [`wp4-4.25-fw11-286a7d43c1b4`](release/wp4-4.25-fw11-286a7d43c1b4/) | `286a7d43c1b4` | Revision 11, `scheduled-rev11` | Fresh pinned rebuilds match committed HEX; standard/Mini 8090 bytes, L3V7 8056 bytes, each 174 bytes static RAM; retained RTC trust and fail-closed read timeouts |
 | [`wp4-4.24-fw10-234f89a73a42`](release/wp4-4.24-fw10-234f89a73a42/) | `234f89a73a42` | Revision 10, `scheduled-rev10` | All three pinned AVR rebuilds match committed HEX; standard/Mini 8172 bytes, L3V7 8136 bytes, each 209 bytes static RAM |
 | [`wp4-4.23-fw7-d466cbc18aae`](release/wp4-4.23-fw7-d466cbc18aae/) | `d466cbc18aaea619c1f41ddb170789a661be3338` | Revision 7, `legacy-rev7` | Original committed HEX files, archived without rebuilding |
 | [`wp4-4.23-fw9-8159567738cd`](release/wp4-4.23-fw9-8159567738cd/) | `8159567738cd020110f778a60e9f605ad37b56bf` | Revision 9, `atomic-rev9` | All three variants rebuilt with the pinned toolchain; LF-normalized HEX files match the committed files byte-for-byte |
