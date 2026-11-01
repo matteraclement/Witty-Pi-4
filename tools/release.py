@@ -47,6 +47,23 @@ PROFILES = {
         "outcome_retention": "32-slot EEPROM journal with CRC8 and commit markers",
         "completion_evidence": "late host readonly-mount report; not kernel-halt evidence",
     },
+    "scheduled-rev11": {
+        "nominal_revision": 11,
+        "software_version": "4.25",
+        "rtc_reads": "coherent 7-byte (minimum revision 8); trusted calendar required",
+        "rtc_writes": "atomic 7-byte calendar (minimum revision 9)",
+        "rtc_calendar_command": "register 58, w8@0x08 (unchanged)",
+        "rtc_trust": "readonly register 74; 0=untrusted, 1=trusted; retained across reset",
+        "rtc_trust_retention": "PCF85063A RAM 0x03; 0x00=pending, 0xa5=clean; verified pending before mutation; trusted only after STOP/frozen readback/run-valid verification",
+        "rtc_trust_raw_access": "virtual register 57 writes rejected",
+        "rtc_trust_repair": "independent accepted time; no ordinary RTC reads",
+        "rtc_mutation": "rejected while scheduled contract armed or active",
+        "revision_source": "running image",
+        "rtc_time_convention": "explicit UTC profile required for scheduled contract",
+        "shutdown_contract": "scheduled-shutdown-v1; normal 60s, emergency 120s",
+        "outcome_retention": "32-slot EEPROM journal with CRC8 and commit markers",
+        "completion_evidence": "late host readonly-mount report; not kernel-halt evidence",
+    },
 }
 BUILD_FQBN = (
     "ATTinyCore:avr:attinyx41:chip=841,clock=8internal,pinmapping=old,"
@@ -154,6 +171,9 @@ def metadata(files, profile):
         versions = re.findall(rb"^\s*SOFTWARE_VERSION=['\"]([0-9]+(?:\.[0-9]+)+)['\"]\s*$",
                               files["Software/wittypi/utilities.sh"][1], re.M)
         require(len(versions) == 1, "Missing or ambiguous software version in utilities.sh")
+        if profile == "scheduled-rev11":
+            require(versions[0].decode("ascii") == PROFILES[profile]["software_version"],
+                    "scheduled-rev11 requires software 4.25")
         for path in SKETCHES:
             revisions = re.findall(rb"^\s*i2cReg\[I2C_FW_REVISION\]\s*=\s*(0x[0-9a-fA-F]+|[0-9]+)\s*;\s*(?://[^\n]*)?$",
                                    files[path][1], re.M)
@@ -297,7 +317,7 @@ def verify_receipt(receipt, manifest, bundle):
         for key in ("command", "build_properties"):
             require(isinstance(item.get(key), list) and bool(item[key]) and
                     all(isinstance(value, str) for value in item[key]), f"Missing build {key}")
-        properties = build_properties(expected["name"], manifest["profile"] == "scheduled-rev10")
+        properties = build_properties(expected["name"], manifest["profile"] in ("scheduled-rev10", "scheduled-rev11"))
         require(item["build_properties"] == properties, "Wrong build properties")
         command = item["command"]
         require(len(command) >= 5 and command[1:4] == ["compile", "--fqbn", BUILD_FQBN] and
@@ -324,7 +344,9 @@ def verify_bundle(bundle):
             all(provenance.get(key) == value for key, value in PROVENANCE.items()), "Invalid provenance metadata")
     require(manifest.get("qualification") == QUALIFICATION, "Unsupported qualification claims")
     rebuilt = provenance["build"] == "rebuilt-byte-identical"
-    require(not rebuilt or profile in ("atomic-rev9", "scheduled-rev10"), "Legacy images are archived, not rebuilt")
+    require(not rebuilt or profile in ("atomic-rev9", "scheduled-rev10", "scheduled-rev11"),
+            "Legacy images are archived, not rebuilt")
+    require(profile != "scheduled-rev11" or rebuilt, "scheduled-rev11 requires a byte-identical rebuild")
     expected = BASE_ARTIFACTS | ({"build-verification.json"} if rebuilt else set())
     artifacts = manifest.get("artifacts")
     require(isinstance(artifacts, dict), "Missing artifacts")
@@ -369,8 +391,10 @@ def create_release(repo, ref, profile, output=None, rebuild=False, arduino_cli="
     repo = Path(repo)
     source, files = committed_snapshot(repo, ref)
     version = metadata(files, profile)
+    require(profile != "scheduled-rev11" or rebuild, "scheduled-rev11 requires a byte-identical rebuild")
     variants = variant_metadata(files)
-    require(not rebuild or profile in ("atomic-rev9", "scheduled-rev10"), "Historical legacy-rev7 images must be archived without rebuilding")
+    require(not rebuild or profile in ("atomic-rev9", "scheduled-rev10", "scheduled-rev11"),
+            "Historical legacy-rev7 images must be archived without rebuilding")
     name = f"wp4-{version}-fw{PROFILES[profile]['nominal_revision']}-{source['commit'][:12]}"
     root = Path(output) if output is not None else repo / "release"
     root.mkdir(parents=True, exist_ok=True)

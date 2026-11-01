@@ -53,9 +53,9 @@ fi
 # interactive actions
 synchronize_with_network_time()
 {
-  if $(has_internet) ; then
+  if has_internet; then
     log '  Internet detected, apply network time to system and Witty Pi...'
-    net_to_system
+    net_to_system || return 1
     system_to_rtc
   else
     log '  Internet not accessible, skip time synchronization.'
@@ -64,7 +64,8 @@ synchronize_with_network_time()
 
 schedule_startup()
 {
-  local startup_time=$(get_startup_time)
+  local startup_time
+  startup_time=$(get_startup_time) || return 1
   if [ "$startup_time" == "0 0:0:0" ]; then
     echo '  Auto startup time is not set yet.'
   else
@@ -87,7 +88,7 @@ schedule_startup()
         log "  Seting startup time to \"$when\""
         IFS=' ' read -r date timestr <<< "$when"
         IFS=':' read -r hour minute second <<< "$timestr"
-        set_startup_time $date $hour $minute $second
+        set_startup_time $date $hour $minute $second || return 1
         log '  Done :-)'
       else
         log "$res"
@@ -100,7 +101,8 @@ schedule_startup()
 
 schedule_shutdown()
 {
-  local shutdown_time=$(get_shutdown_time)
+  local shutdown_time
+  shutdown_time=$(get_shutdown_time) || return 1
   if [ "$shutdown_time" == "0 0:0:0" ]; then
     echo  '  Auto shutdown time is not set yet.'
   else
@@ -123,7 +125,7 @@ schedule_shutdown()
         log "  Seting shutdown time to \"$when\""
         IFS=' ' read -r date timestr <<< "$when"
         IFS=':' read -r hour minute second <<< "$timestr"
-        set_shutdown_time $date $hour $minute $second
+        set_shutdown_time $date $hour $minute $second || return 1
         log '  Done :-)'
       else
         log "$res"
@@ -463,14 +465,14 @@ other_settings()
 reset_startup_time()
 {
   log '  Clearing auto startup time...' '-n'
-  clear_startup_time
+  clear_startup_time || return 1
   log ' done :-)'
 }
 
 reset_shutdown_time()
 {
   log '  Clearing auto shutdown time...' '-n'
-  clear_shutdown_time
+  clear_shutdown_time || return 1
   log ' done :-)'
 }
 
@@ -600,14 +602,14 @@ while true; do
   echo '  2. Write RTC time to system'
   echo '  3. Synchronize with network time'
   echo -n '  4. Schedule next shutdown'
-  shutdown_time=$(get_shutdown_time)
+  shutdown_time=$(get_shutdown_time) || shutdown_time='unavailable'
   if [ "$shutdown_time" == "00 00:00:00" ]; then
     echo ''
   else
     echo " [$shutdown_time]";
   fi
   echo -n '  5. Schedule next startup'
-  startup_time=$(get_startup_time)
+  startup_time=$(get_startup_time) || startup_time='unavailable'
   if [ "$startup_time" == "00 00:00:00" ]; then
     echo ''
   else

@@ -24,14 +24,24 @@ PERIPHERAL = r"""
 #include <vector>
 #include <cstdlib>
 #include <ctime>
+#include <string>
+#define PROGMEM
+#define pgm_read_byte(p) (*(p))
 using byte = unsigned char;
 using boolean = bool;
 #define _SOFTIICMASTER_H 1
 #define I2C_WRITE 0
 #define I2C_READ 1
 byte rtc[18], nextRtc[18], pointerReg;
-bool expectPointer, reading, rollover;
+bool expectPointer, reading, rollover, rtcAddress;
 int clicks, nack, busReads, stops;
+int faultAt=-1, operations;
+bool corruptReadback;
+struct Reset {};
+void boundary() { if (operations++ == faultAt) throw Reset{}; }
+int nackAt=-1, busOps;
+int readErrorAt=-1, readOps;
+bool rejectPending;
 int writeTickAfter;
 bool pendingTick;
 byte bcd2dec(byte);
@@ -47,8 +57,8 @@ void tickCalendar() {
   for (int i=0; i<7; ++i) rtc[4+i]=(fields[i]/10)*16+fields[i]%10;
 }
 bool i2c_init_() { return true; }
-bool i2c_start_(uint8_t) {
-  expectPointer=true; reading=false;
+bool i2c_start_(uint8_t address) {
+  rtcAddress=(address>>1)==0x51; expectPointer=true; reading=false;
   return nack != 1;
 }
 bool i2c_rep_start_(uint8_t address) {
@@ -57,21 +67,32 @@ bool i2c_rep_start_(uint8_t address) {
   return nack != 3;
 }
 bool i2c_write_(uint8_t value) {
+  boundary();
+  if (busOps++ == nackAt) return false;
   if (nack == 2) return false;
   if (expectPointer) { pointerReg=value; expectPointer=false; }
   else {
-    rtc[pointerReg++]=value;
-    if (writeTickAfter && --writeTickAfter == 0) pendingTick=true;
+    if (rtcAddress && !(rejectPending && pointerReg==3 && value==0)) rtc[pointerReg]=value;
+    ++pointerReg;
+    if (writeTickAfter && pointerReg>=5 && pointerReg<=11 && --writeTickAfter == 0) pendingTick=true;
   }
   return true;
 }
-uint8_t i2c_read_(bool) { ++busReads; return rtc[pointerReg++]; }
+int i2c_read_(bool) {
+  boundary();
+  ++busReads;
+  if (readOps++ == readErrorAt) return -1; // Low-level SCL timeout result.
+  byte value=rtcAddress ? rtc[pointerReg++] : 0;
+  if (corruptReadback && pointerReg==11) value^=1;
+  return value;
+}
+// Faults happen inside the real SoftWireMaster transaction, not a model write.
 void i2c_stop_() {
   ++stops;
   // Calendar ticks are deferred until STOP, including during writes.
-  if (pendingTick) { tickCalendar(); pendingTick=false; }
+  if (pendingTick && !(rtc[0] & 0x20)) { tickCalendar(); pendingTick=false; }
   // PCF85063A freezes the counters for the access, not across separate reads.
-  if (reading && rollover) {
+  if (reading && rollover && pointerReg>=8 && !(rtc[0] & 0x20)) {
     for (int i=0; i<18; ++i) rtc[i]=nextRtc[i];
     rollover=false;
   }
@@ -85,6 +106,22 @@ byte i2cReg[256];
 char i2cIndex;
 bool powerIsOn=true, turningOff=false, systemIsUp=true;
 byte alarm1Delayed;
+bool locked;
+struct Eeprom {
+  byte values[512] = {};
+  byte read(int index) { return values[index]; }
+  void update(int index, byte value) {
+    boundary();
+    values[index]=value;
+    boundary();
+  }
+} EEPROM;
+void eeprom_update_byte(byte* address, byte value) { EEPROM.update(uintptr_t(address),value); }
+bool calendarTrusted();
+bool calendarPending();
+void calendarWrite();
+uint32_t calendarUtc(byte*);
+bool contractLocked() { return locked; }
 struct HostBus {
   std::vector<byte> response;
   std::vector<byte> request;
@@ -101,8 +138,8 @@ void updateRegister(byte reg, byte value) { i2cReg[reg]=value; }
 bool canTriggerAlarm() { return true; }
 void emulateButtonClick() { ++clicks; }
 void reset_rtc_alarm() {}
-void copyAlarm(byte) {}
-bool contractActive() { return false; }
+void copyAlarm(byte);
+bool contractActive() { return locked; }
 void contractReply() {}
 void contractReceive(int) {}
 """
@@ -113,6 +150,7 @@ void loadCalendar(const byte* before, const byte* after) {
   rollover=true;
 }
 int main() {
+  rtc[3]=nextRtc[3]=0xA5;
   softWireMaster.begin();
   const byte before[][7] = {
     {0x59,0x34,0x12,0x28,0x03,0x10,0x26},
@@ -186,12 +224,126 @@ int main() {
     assert(softWireMaster.read()==0x12);
     rtc[4]=0x59;
   }
+  for (int failedByte=0;failedByte<7;++failedByte) {
+    readOps=0; readErrorAt=failedByte;
+    assert(readFromDevice(ADDRESS_RTC,4,7)==0);
+    assert(softWireMaster.available()==0 && softWireMaster.read()==-1);
+    assert(softWireMaster.endTransmission()==4);
+  }
+  readErrorAt=-1;
   // The internal-register-address overload must preserve a pointer-write NACK.
   nack=2;
   assert(softWireMaster.requestFrom(uint8_t(ADDRESS_RTC), uint8_t(7),
                                   uint32_t(4), uint8_t(1), uint8_t(1))==0);
   assert(softWireMaster.available()==0 && softWireMaster.read()==-1);
   assert(softWireMaster.endTransmission()==3);
+}
+"""
+
+TRUST_SCENARIOS = r"""
+const std::vector<byte> target={58,0x59,0x59,0x23,0x31,0x04,0x12,0x26};
+void sendCalendar() {
+  TinyWireS.request=target; TinyWireS.index=0; receiveEvent(8);
+}
+void boot() {
+  // Volatile CPU/transport fields only, never retained RTC/EEPROM.
+  softWireMaster.begin(); faultAt=-1; nackAt=-1; nack=0;
+  corruptReadback=false; rejectPending=false; operations=busOps=0;
+  readErrorAt=-1; readOps=0;
+  TinyWireS.request.clear(); TinyWireS.response.clear(); TinyWireS.index=0;
+}
+void fixture() {
+  boot(); locked=false; rollover=false; pendingTick=false; writeTickAfter=0;
+  for (byte &b:rtc) b=0;
+  rtc[0]=0x05; // Preserve unrelated CAP_SEL and CIE.
+  rtc[7]=rtc[9]=1; rtc[10]=0x25;
+  rtc[8]=3; // 2025-01-01 was Wednesday; the initial calendar is canonical.
+  rtc[3]=0xA5;
+}
+void assertBlocked() {
+  assert(!calendarTrusted());
+  i2cIndex=58; TinyWireS.response.clear(); requestEvent();
+  assert(TinyWireS.response==std::vector<byte>(7,255));
+  int before=clicks; processAlarmIfNeeded(); assert(clicks==before);
+}
+int main() {
+  fixture(); sendCalendar(); assert(calendarTrusted());
+  int complete=operations;
+  assert(rtc[0]==0x05 && calendarUtc(nullptr));
+  for (int cut=0;cut<complete;++cut) {
+    fixture(); faultAt=cut;
+    try { sendCalendar(); } catch (const Reset&) {}
+    faultAt=-1;
+    bool committed=calendarTrusted();
+    boot(); // MCU reset and host restart cannot restore pending trust.
+    assert(calendarTrusted()==committed);
+    if (committed) {
+      assert(rtc[0]==0x05);
+      assert(rtc[10]==0x25 || calendarUtc(const_cast<byte*>(target.data()+1)));
+    } else assertBlocked();
+    sendCalendar(); assert(calendarTrusted() && rtc[0]==0x05);
+  }
+  for (int n=0;n<24;++n) {
+    fixture(); nackAt=n; sendCalendar(); boot();
+    if (!calendarTrusted()) assertBlocked();
+    sendCalendar(); assert(calendarTrusted());
+  }
+  for (int n=0;n<13;++n) {
+    fixture(); readErrorAt=n; sendCalendar(); boot();
+    if (n<12) assertBlocked(); // Includes pending, STOP, each byte, RUN and OS.
+    sendCalendar(); assert(calendarTrusted());
+  }
+  fixture(); corruptReadback=true; sendCalendar(); assertBlocked();
+  boot(); sendCalendar(); assert(calendarTrusted());
+  fixture(); rejectPending=true; sendCalendar();
+  assert(calendarTrusted() && rtc[10]==0x25 && rtc[0]==0x05);
+  for (int marker: {0,1,0xA4,0xFF}) {
+    fixture(); rtc[3]=marker; boot(); assertBlocked();
+    sendCalendar(); assert(calendarTrusted());
+  }
+  fixture(); locked=true;
+  auto before=std::vector<byte>(rtc,rtc+18);
+  sendCalendar(); assert(operations==0 && rtc[3]==0xA5);
+  assert(before==std::vector<byte>(rtc,rtc+18));
+  for (int reg: {54,57,59,60,61,62,63,64}) {
+    TinyWireS.request={byte(reg),0}; TinyWireS.index=0; receiveEvent(2);
+    assert(before==std::vector<byte>(rtc,rtc+18));
+  }
+  locked=false;
+  for (int tick=1;tick<=7;++tick) {
+    fixture(); writeTickAfter=tick; sendCalendar();
+    assert(calendarTrusted() && rtc[0]==0x05);
+    assert(rtc[4]==0 && rtc[7]==1 && rtc[9]==1 && rtc[10]==0x27);
+  }
+  fixture(); TinyWireS.request={74,0}; TinyWireS.index=0; receiveEvent(2);
+  assert(calendarTrusted()); // Virtual trust register is readonly.
+  initializeRegisters(); assert(calendarTrusted());
+  rtc[3]=0; initializeRegisters(); assertBlocked();
+  fixture(); rtc[0]=0; rtc[3]=0; rtc[4]=0x80; boot(); assertBlocked();
+  sendCalendar(); assert(calendarTrusted()); // Documented PCF power-reset defaults.
+  for (int mode: {0x02,0x20,0x80,0xA2}) {
+    fixture(); rtc[0]|=mode; assertBlocked();
+    sendCalendar(); assert(calendarTrusted() && rtc[0]==0x05);
+  }
+  fixture(); rtc[4]|=0x80; assertBlocked();
+  sendCalendar(); assert(calendarTrusted());
+  fixture(); rtc[3]=0;
+  TinyWireS.request={57,0xA5}; TinyWireS.index=0; receiveEvent(2); assertBlocked();
+  fixture(); TinyWireS.request={54,rtc[0]}; TinyWireS.index=0; receiveEvent(2); assertBlocked();
+  sendCalendar(); assert(calendarTrusted());
+  fixture(); TinyWireS.request={58,0,0,0,0x30,1,0x02,0x26};
+  TinyWireS.index=0; receiveEvent(8); assertBlocked();
+  assert(rtc[0]&0x20); sendCalendar(); assert(calendarTrusted());
+  fixture(); alarm1Delayed=3; assert(calendarPending() && !alarm1Delayed); assertBlocked();
+  fixture();
+  for (int i=0;i<4;++i) i2cReg[27+i]=0x10+i;
+  copyAlarm(27);
+  for (int i=0;i<4;++i) assert(rtc[11+i]==0x10+i);
+  for (int v=0;v<256;++v) assert(bcd2dec(v)==(v/16*10+v%16));
+  for (uint32_t day=0;day<65536;++day) for (int hour: {0,23,255})
+    for (int minute: {0,59,255}) for (int second: {0,59,255})
+      assert(getTimestamp(day,hour,minute,second)==(((day*24+hour)*60+minute)*60+second));
+  std::printf("PASS retained calendar: %d reset boundaries, byte-NACKs, repair, STOP rollover\n",complete);
 }
 """
 
@@ -225,6 +377,7 @@ WRITE_COMMANDS = r"""
 get_sys_timestamp() { date -d "$SYSTEM_TIME UTC" +%s; }
 i2ctransfer() {
   [[ ${TRANSFER_STATUS:-0} == 0 ]] || return 1
+  if [[ $4 == 73 ]]; then echo '0x01 0x00 0x00 0x01 0x01 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00'; return; fi
   "$RTC_BRIDGE" "$@"
 }
 TIME_UNKNOWN=1
@@ -239,8 +392,23 @@ source "$1"
 export LC_ALL=C TZ=UTC
 log() { printf '%s\n' "$*" >&2; }
 log2file() { printf '%s\n' "$*" >&2; }
-i2cget() { echo "${REVISION:-0x08}"; return "${I2C_STATUS:-0}"; }
-i2ctransfer() { printf '%s\n' "$SNAPSHOT"; return "${TRANSFER_STATUS:-0}"; }
+i2cget() {
+  [[ ${I2C_STATUS:-0} == 0 ]] || return 1
+  if [[ $4 == 74 ]]; then
+    if [[ -n ${RTC_STATE:-} ]]; then
+      local value
+      value=$("$RTC_BRIDGE" -y 1 w1@0x08 74 r1) || return
+      read -r value <<< "$value"
+      printf '%s\n' "$value"
+    else echo "${TRUST:-0x01}"; fi
+  elif [[ $4 == 13 ]]; then echo 0x00
+  else echo "${REVISION:-0x0b}"; fi
+}
+i2ctransfer() {
+  [[ ${TRANSFER_STATUS:-0} == 0 ]] || return 1
+  if [[ $4 == 73 ]]; then echo '0x01 0x00 0x00 0x01 0x01 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00'
+  else printf '%s\n' "$SNAPSHOT"; fi
+}
 timedatectl() { echo "${NTP_STATE:-yes}"; return "${SHOW_STATUS:-0}"; }
 sleep() { :; }
 """
@@ -295,9 +463,13 @@ def compile_rtc(directory, variant, scenarios):
         r"^#define (?:I2C_\w+|REASON_\w+|ADDRESS_\w+)\s+[^\n]+",
         source, re.MULTILINE))
     handlers = "\n".join(extract(source, signature) for signature in (
-        "byte readFromDevice(", "void writeToDevice(", "byte bcd2dec(",
-        "uint32_t getTimestamp(", "long getAlarmTimestamp(", "void processAlarmIfNeeded()",
-        "void requestEvent()", "void receiveEvent("))
+        "byte readFromDevice(", "byte writeToDevice(", "byte bcd2dec(",
+        "uint32_t getTimestamp(", "long getAlarmTimestamp(", "void copyAlarm(", "void processAlarmIfNeeded()",
+        "void initializeRegisters()", "void requestEvent()", "void receiveEvent("))
+    contract = (ROOT / variant / "ScheduledContract.h").read_text()
+    handlers += "\n" + "\n".join(extract(contract, signature) for signature in (
+        "byte calendarByte(", "boolean calendarSetByte(", "boolean calendarTrusted()", "boolean calendarPending()",
+        "uint32_t calendarUtc(", "void calendarWrite()"))
     cpp = directory / "rtc.cpp"
     cpp.write_text(PERIPHERAL +
         f'\n#include "{ROOT / variant / "SoftWireMaster.h"}"\n' +
@@ -311,7 +483,7 @@ def compile_rtc(directory, variant, scenarios):
 class RtcReads(unittest.TestCase):
     def test_managed_utc_profile_is_independent_of_host_timezone_and_rejects_legacy_edits(self):
         result = shell(r'''
-i2cget() { if [[ $4 == 13 ]]; then echo 0x01; else echo 0x0a; fi; }
+i2cget() { if [[ $4 == 13 || $4 == 74 ]]; then echo 0x01; else echo 0x0b; fi; }
 export TZ=Europe/Paris
 get_rtc_timestamp
 if set_startup_time 2 12 0 0; then exit 9; fi
@@ -346,7 +518,8 @@ if set_shutdown_time 2 12 0 0; then exit 10; fi
     def test_oscillator_stop_blocks_clock_sync(self):
         snapshot = "0xd6 0x34 0x12 0x28 0x03 0x10 0x26"
         result = shell("rtc_has_bad_time", snapshot)
-        self.assertEqual((result.returncode, result.stdout.strip()), (0, "1"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "")
         result = shell("get_rtc_timestamp", snapshot)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
@@ -423,6 +596,12 @@ if set_shutdown_time 2 12 0 0; then exit 10; fi
 
 
 class RtcWrites(unittest.TestCase):
+    def test_retained_transaction_faults_and_repairs(self):
+        for variant in ("WittyPi4", "WittyPi4_L3V7"):
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as d:
+                binary = compile_rtc(Path(d), variant, TRUST_SCENARIOS)
+                subprocess.run([str(binary)], check=True)
+
     def test_rollovers_through_host_and_firmware(self):
         cases = [
             ("2026-10-28 12:34:59", "2026-10-28 12:35:00"),
@@ -440,7 +619,7 @@ class RtcWrites(unittest.TestCase):
                     for tick_after in range(1, 8):
                         with self.subTest(before=before, tick_after=tick_after):
                             state.write_bytes(bytes(18))
-                            result = shell(WRITE_COMMANDS, "", REVISION="0x09",
+                            result = shell(WRITE_COMMANDS, "", REVISION="0x0b",
                                 RTC_BRIDGE=str(binary), RTC_STATE=str(state),
                                 SYSTEM_TIME=before, WRITE_TICK_AFTER=str(tick_after),
                                 WRITE_NACK="0")
@@ -470,7 +649,7 @@ class RtcWrites(unittest.TestCase):
                 for overrides in cases:
                     with self.subTest(overrides=overrides):
                         state.write_bytes(initial)
-                        environment = dict(REVISION="0x09", RTC_BRIDGE=str(binary),
+                        environment = dict(REVISION="0x0b", RTC_BRIDGE=str(binary),
                             RTC_STATE=str(state), SYSTEM_TIME="2026-12-31 23:59:59",
                             WRITE_TICK_AFTER="0", WRITE_NACK="0")
                         environment.update(overrides)

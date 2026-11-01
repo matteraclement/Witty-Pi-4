@@ -133,8 +133,11 @@ public:
     // Never expose bus data or an old receive buffer after an address/data NACK.
     if (error) quantity = 0;
     // perform blocking read into buffer
-    for (uint8_t cnt=0; cnt < quantity; cnt++)
-      rxBuffer[cnt] = i2c_read_(cnt == quantity-1);
+    for (uint8_t cnt=0; cnt < quantity; cnt++) {
+      int value=i2c_read_(cnt == quantity-1);
+      if (value < 0) { error=4; quantity=0; break; }
+      rxBuffer[cnt]=value;
+    }
     // set rx buffer iterator vars
     rxBufferIndex = 0;
     rxBufferLength = quantity;

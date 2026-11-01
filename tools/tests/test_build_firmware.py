@@ -6,7 +6,30 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from build_firmware import _hex_bytes, _resource_usage
+from build_firmware import _hex_bytes, _resource_usage, build_properties
+
+
+class FirmwareBuildProperties(unittest.TestCase):
+    def test_scheduled_profiles_keep_pinned_size_flags_for_every_variant(self):
+        scheduled = (
+            "-mcall-prologues -fno-inline-small-functions "
+            "-fno-inline-functions-called-once -fno-tree-dominator-opts -finline-limit=3"
+        )
+        for variant in ("standard", "mini", "l3v7"):
+            with self.subTest(variant=variant):
+                cpp = scheduled + (" -DWITTY_PI_4_MINI" if variant == "mini" else "")
+                self.assertEqual(build_properties(variant, True), [
+                    "compiler.c.elf.extra_flags=-Wl,--relax",
+                    "compiler.cpp.extra_flags=" + cpp,
+                ])
+
+    def test_historical_nonscheduled_profiles_keep_original_flags(self):
+        for variant in ("standard", "mini", "l3v7"):
+            with self.subTest(variant=variant):
+                expected = ["compiler.c.elf.extra_flags=-Wl,--relax"]
+                if variant == "mini":
+                    expected.append("compiler.cpp.extra_flags=-DWITTY_PI_4_MINI")
+                self.assertEqual(build_properties(variant, False), expected)
 
 
 class FirmwareHexEncoding(unittest.TestCase):

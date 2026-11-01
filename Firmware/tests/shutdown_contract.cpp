@@ -23,6 +23,7 @@ byte i2cReg[50];
 bool powerIsOn, listenToTxd, systemIsUp, turningOff, turnOffFromTXD;
 bool buttonPressed, isButtonClickEmulated, wakeupByWatchdog, ledIsOn;
 byte lastButton, lastSystemUp, powerCutDelay, skipTempShutdownCount;
+byte alarm1Delayed;
 int pins[12], modes[12], sleepCount;
 char temperature;
 int boardRead(int pin) { return pins[pin]; }
@@ -48,14 +49,19 @@ struct HostBus {
 struct Calendar {
   byte bytes[7];
   byte index=0;
+  byte marker=0;
   bool available=true;
-  int read() { return bytes[index++]; }
+  int read() {
+    byte reg=index++;
+    return reg==3 ? marker : reg==0 ? 0 : bytes[reg-4];
+  }
 } softWireMaster;
 byte readFromDevice(byte address, byte index, byte count) {
-  assert(address==ADDRESS_RTC && index==4 && count==7);
-  softWireMaster.index=0;
+  assert(address==ADDRESS_RTC && ((index==4 && count==7) || ((index==0 || index==3 || index==4) && count==1)));
+  softWireMaster.index=index;
   return softWireMaster.available ? count : 0;
 }
+byte writeToDevice(byte, byte, byte*, byte) { return 0; }
 struct Interrupted {};
 struct Eeprom {
   std::array<byte,512> memory;
@@ -67,6 +73,7 @@ struct Eeprom {
     memory.at(address)=value;
   }
 } EEPROM;
+void eeprom_update_byte(byte* address, byte value) { EEPROM.update(uintptr_t(address),value); }
 void eeprom_read_block(void* dest, const void* address, size_t size) {
   std::memcpy(dest, EEPROM.memory.data()+uintptr_t(address), size);
 }
@@ -103,6 +110,7 @@ void resetRam() {
   contractSetup(); // Real setup physically cuts before loading the journal.
 }
 void ready() {
+  softWireMaster.marker=0;
   EEPROM.memory.fill(255); EEPROM.remaining=-1;
   std::memset(i2cReg,0,sizeof i2cReg);
   utc(T-10); resetRam();
@@ -117,6 +125,9 @@ void ready() {
   modes[PIN_BUTTON]=INPUT_PULLUP; skipTempShutdownCount=120;
   i2cReg[I2C_CONF_POWER_CUT_DELAY]=250;
   command(1,contract.boot,1,T);
+  assert(contract.phase==0); // Erased retained trust blocks arm.
+  softWireMaster.marker=0xA5;
+  command(1,contract.boot,1,T);
   assert(contract.phase==1 && contract.due==T);
 }
 void activate() { utc(T); contractPoll(); assert(contractActive()); }
@@ -130,6 +141,8 @@ int main() {
   // Board activates and cuts without any host progress or callback.
   ready(); activate(); finishClick();
   assert(!turningOff && systemIsUp);
+  softWireMaster.marker=0;
+  assert(contractUtc()==0); // Pending calendar cannot suspend active Timer2.
   age(119); assert(powerIsOn && contract.elapsed==119);
   second(); assert(!powerIsOn && contract.phase==5 && contract.elapsed==120);
   assert(sleepCount==1); auto expired=contract;
@@ -226,6 +239,7 @@ int main() {
   command(1,0,2,T+100); assert(contract.phase==6); // Exhaustion never wraps to a fresh identity.
 
   // Calendar parser uses real Gregorian limits and survives the 2038 boundary.
+  softWireMaster.marker=0xA5;
   for (uint32_t time: {946684800U,1709164799U,2147483648U,4102444799U}) {
     utc(time); assert(contractUtc()==time);
   }

@@ -60,18 +60,13 @@ if [ $has_mc == 1 ] ; then
   offset=$(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_RTC_OFFSET)
   log "RTC offset register has value $offset"
 
-  # make sure register I2C_RTC_CTRL1 is 0
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_CTRL1 0
-  
-  # synchronize system and RTC time
-  if ! rtc_bad=$(rtc_has_bad_time); then
-    log 'Cannot read RTC time; skipping clock synchronization.'
-  elif [ "$rtc_bad" == 1 ]; then
-    log 'RTC has bad time, write system time into RTC'
-    system_to_rtc
-  else
-    log 'Seems RTC has good time, write RTC time into system'
+  # Never clear STOP/control bits or repair from an unaccepted boot clock.
+  # Untrusted calendars need an explicit independently sourced repair.
+  if rtc_has_bad_time >/dev/null; then
+    log 'RTC is trusted and valid, write RTC time into system'
     rtc_to_system
+  else
+    log 'RTC is untrusted or unavailable; skipping clock synchronization. Repair from independently accepted time.'
   fi
 
   # check if system was shut down because of low-voltage

@@ -57,6 +57,7 @@ void pinMode(int pin, int mode) { modes[pin] = mode; }
 #define boardPinMode pinMode
 bool contractActive() { return false; }
 void contractInterrupted() {}
+bool calendarTrusted() { return true; }
 void ledOn() { ledIsOn=true; }
 void ledOff() { ledIsOn=false; }
 void powerOn() { powerIsOn=true; pins[PIN_CTRL]=1; }
@@ -86,6 +87,7 @@ struct Eeprom {
   byte read(byte index) { return index == I2C_FW_REVISION ? 8 : 255; }
   void update(byte, byte) {}
 } EEPROM;
+void eeprom_update_byte(byte* address, byte value) { EEPROM.update(uintptr_t(address),value); }
 """
 
 SCENARIOS = r"""

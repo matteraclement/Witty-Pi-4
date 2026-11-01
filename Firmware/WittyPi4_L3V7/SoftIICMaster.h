@@ -106,7 +106,8 @@ bool __attribute__ ((noinline)) i2c_write_(uint8_t value) asm("ass_i2c_write_") 
 
 // Read one byte. If <last> is true, we send a NAK after having received
 // the byte in order to terminate the read sequence.
-uint8_t __attribute__ ((noinline)) i2c_read_(bool last) __attribute__ ((used));
+// Returns 0..255, or -1 on a data-bit or ACK-clock timeout.
+int __attribute__ ((noinline)) i2c_read_(bool last) __attribute__ ((used));
 
 // You can set I2C_CPUFREQ independently of F_CPU if you
 // change the CPU frequency on the fly. If you do not define it,
@@ -451,7 +452,7 @@ bool i2c_write_(uint8_t value)
   return true; // fooling the compiler
 }
 
-uint8_t i2c_read_(bool last)
+int i2c_read_(bool last)
 {
   __asm__ __volatile__
     (
@@ -475,7 +476,7 @@ uint8_t i2c_read_(bool last)
      " nop \n\t "
      " sbis     %[SCLIN], %[SCLPIN]     ;check for SCL high    ;; 9C +2X \n\t"
      " rcall    ass_i2c_wait_scl_high_ \n\t"
-     " brmi     _Li2c_read_return_       ;return if timeout     ;; 10C + 2X\n\t"
+     " brmi     _Li2c_read_error_       ;reject incomplete byte on timeout\n\t"
      " clc                ;clear carry flag      ;; 11C + 2X\n\t"
      " sbic %[SDAIN],%[SDAPIN]  ;if SDA is high        ;; 11C + 2X\n\t"
      " sec              ;set carry flag        ;; 12C + 2X\n\t"
@@ -504,6 +505,7 @@ uint8_t i2c_read_(bool last)
      " nop \n\t "
      " sbis %[SCLIN],%[SCLPIN]  ;wait SCL high         ;; 12C + X\n\t"
      " rcall    ass_i2c_wait_scl_high_ \n\t"
+     " brmi     _Li2c_read_error_       ;ACK clock timeout is a transport failure\n\t"
 #if I2C_DELAY_COUNTER >= 1
      " rcall  ass_i2c_delay_half_  ;delay T/2             ;; 11C + 2X\n\t"
 #endif
@@ -513,7 +515,12 @@ uint8_t i2c_read_(bool last)
      "sbi %[SCLDDR],%[SCLPIN] ;force SCL low so SCL=H is short\n\t"
      " mov  r24,r23                                        ;; 12C + 2X \n\t"
      " clr  r25                                            ;; 13 C + 2X\n\t"
-     " ret                                                     ;; 17C + X"
+     " ret                                                     ;; 17C + X\n\t"
+     "_Li2c_read_error_: \n\t"
+     " sbi %[SCLDDR],%[SCLPIN] \n\t"
+     " ldi r24,0xFF \n\t"
+     " ldi r25,0xFF \n\t"
+     " ret \n\t"
      ::
       [SCLDDR] "I"  (SCL_DDR), [SCLPIN] "I" (SCL_PIN), [SCLIN] "I" (SCL_IN),
       [SDADDR] "I"  (SDA_DDR), [SDAPIN] "I" (SDA_PIN), [SDAIN] "I" (SDA_IN)

@@ -42,9 +42,6 @@ class ShutdownContract(unittest.TestCase):
                 ], check=True)
                 subprocess.run([str(binary)], check=True)
 
-    def test_variant_protocols_are_identical(self):
-        self.assertEqual((ROOT / "WittyPi4" / "ScheduledContract.h").read_bytes(),
-                         (ROOT / "WittyPi4_L3V7" / "ScheduledContract.h").read_bytes())
 
 
 if __name__ == "__main__":

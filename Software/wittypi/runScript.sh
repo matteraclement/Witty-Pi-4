@@ -24,7 +24,7 @@ while [[ "$(date +%Y)" == *"1969"* ]] || [[ "$(date +%Y)" == *"1970"* ]]; do
 done
 
 # get current timestamp
-cur_time=$(current_timestamp)
+cur_time=$(current_timestamp) || exit 1
 echo "--------------- $(date -d @$cur_time +'%Y-%m-%d %H:%M:%S') ---------------"
 
 extract_timestamp()
@@ -67,6 +67,7 @@ setup_off_state()
   local res=$(check_sys_and_rtc_time)
   if [ ! -z "$res" ]; then
     log "$res"
+    return 1
   fi 
   log "Schedule next startup at:  $(date -d @$1 +'%Y-%m-%d %H:%M:%S')"
   local date=$(date -d "@$1" +"%d")
@@ -81,6 +82,7 @@ setup_on_state()
   local res=$(check_sys_and_rtc_time)
   if [ ! -z "$res" ]; then
     log "$res"
+    return 1
   fi 
   log "Schedule next shutdown at: $(date -d @$1 +'%Y-%m-%d %H:%M:%S')"
   local date=$(date -d "@$1" +"%d")
@@ -94,8 +96,8 @@ if [ -f $schedule_file ]; then
 
   if [[ -z $(grep '[^[:space:]]' $schedule_file) ]] ; then
     log 'The schedule script file is empty, clear scheduled startup and shutdown time.'
-    clear_startup_time
-    clear_shutdown_time
+    clear_startup_time || exit 1
+    clear_shutdown_time || exit 1
     exit
   fi
 
@@ -161,9 +163,9 @@ if [ -f $schedule_file ]; then
             else
               if [ ! -z "$2" ] && [ $interrupted == 0 ] ; then
                 # schedule a shutdown 1 minute before next startup
-                setup_on_state $((check_time-duration-60))
+                setup_on_state $((check_time-duration-60)) || exit 1
               else
-                setup_on_state $check_time
+                setup_on_state $check_time || exit 1
               fi
             fi
           elif [[ ${states[$index]} == OFF* ]] ; then
@@ -174,9 +176,9 @@ if [ -f $schedule_file ]; then
                 # jump back to previous OFF state 
                 prev_state=${states[$((index-1))]}
                 prev_duration=$(extract_duration $prev_state)
-                setup_off_state $((check_time-duration-prev_duration))
+                setup_off_state $((check_time-duration-prev_duration)) || exit 1
               else
-                setup_off_state $check_time
+                setup_off_state $check_time || exit 1
               fi
             fi
           else

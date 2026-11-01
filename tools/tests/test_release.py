@@ -89,6 +89,166 @@ class ReleaseTests(unittest.TestCase):
             b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
         self.resign(bundle, manifest)
 
+    def commit_scheduled_profile(self, revision=11, version="4.25"):
+        (self.repo / "Software/wittypi/utilities.sh").write_text(
+            f"SOFTWARE_VERSION='{version}'\n")
+        for sketch in release.SKETCHES:
+            (self.repo / sketch).write_text(
+                f"void setup() {{\n  i2cReg[I2C_FW_REVISION] = 0x{revision:02x};\n}}\n")
+            (self.repo / Path(sketch).parent / "ScheduledContract.h").write_text(
+                "// Scheduled contract fixture, not production firmware.\n")
+        self.commit = self.commit_files()
+
+    def synthetic_build(self, source, output, cli):
+        """Exercise publication with deterministic fixtures, not a claimed AVR build."""
+        receipt = {
+            "schema_version": 1, "status": "verified-build", "fqbn": release.BUILD_FQBN,
+            "toolchain": {
+                "arduino_cli": {"version": "fixture"},
+                "core": {"id": "ATTinyCore:avr", "version": "1.5.2"},
+                "avr_gcc": {"version": "7.3.0-atmel3.6.1-arduino7",
+                            "compiler_version": "avr-gcc 7.3.0"},
+            },
+            "variants": [],
+        }
+        for name, product, path in release.VARIANTS:
+            artifact = (source / path).read_bytes()
+            filename = Path(path).name
+            (output / filename).write_bytes(artifact)
+            properties = release.build_properties(
+                name, (source / Path(path).parent / "ScheduledContract.h").is_file())
+            command = [cli, "compile", "--fqbn", release.BUILD_FQBN,
+                       "--clean", "--build-path", "/fixture/build/" + name]
+            for value in properties:
+                command.extend(["--build-property", value])
+            command.append("/fixture/source/" + str(Path(path).parent))
+            receipt["variants"].append({
+                "name": name, "product_id": product, "sketch": str(Path(path).parent),
+                "hex_file": filename, **release.describe(artifact),
+                "compiler_hex_sha256": release.sha256(artifact),
+                "compiler_hex_size_bytes": len(artifact),
+                "compiler_hex_line_endings": "LF", "artifact_hex_line_endings": "LF",
+                "flash_bytes": release.intel_hex(artifact)["data_bytes"],
+                "flash_capacity_bytes": 8192, "static_ram_bytes": 100,
+                "ram_capacity_bytes": 512, "command": command,
+                "build_properties": properties,
+            })
+        return receipt
+
+    def test_retained_profile_rebuild_publication_is_deterministic_and_committed_only(self):
+        self.commit_scheduled_profile()
+        with patch("build_firmware.build_firmware", side_effect=self.synthetic_build):
+            first = self.create(profile="scheduled-rev11", rebuild=True)
+            # Even revision/version/HEX edits cannot change the committed snapshot.
+            (self.repo / release.SKETCHES[0]).write_bytes(b"dirty sketch\n")
+            (self.repo / "Software/wittypi/utilities.sh").write_bytes(b"dirty version\n")
+            (self.repo / release.VARIANTS[0][2]).write_bytes(b"dirty HEX\n")
+            second = self.create(profile="scheduled-rev11", rebuild=True,
+                                 output=self.root / "second")
+        self.assertEqual({p.name: p.read_bytes() for p in first.iterdir()},
+                         {p.name: p.read_bytes() for p in second.iterdir()})
+        manifest = release.verify_bundle(first)
+        self.assertEqual(manifest["release_name"], f"wp4-4.25-fw11-{self.commit[:12]}")
+        self.assertEqual(manifest["software_version"], "4.25")
+        self.assertEqual(manifest["compatibility"], release.PROFILES["scheduled-rev11"])
+        self.assertEqual(manifest["compatibility"]["nominal_revision"], 11)
+        self.assertEqual(manifest["compatibility"]["rtc_trust"],
+                         "readonly register 74; 0=untrusted, 1=trusted; retained across reset")
+        self.assertEqual(manifest["compatibility"]["rtc_trust_retention"],
+                         "PCF85063A RAM 0x03; 0x00=pending, 0xa5=clean; verified pending before mutation; trusted only after STOP/frozen readback/run-valid verification")
+        self.assertEqual(manifest["compatibility"]["rtc_trust_raw_access"],
+                         "virtual register 57 writes rejected")
+        self.assertEqual(manifest["compatibility"]["rtc_calendar_command"],
+                         "register 58, w8@0x08 (unchanged)")
+        self.assertEqual(manifest["compatibility"]["shutdown_contract"],
+                         release.PROFILES["scheduled-rev10"]["shutdown_contract"])
+        self.assertEqual(manifest["provenance"]["build"], "rebuilt-byte-identical")
+        receipt = release.load_json(first / "build-verification.json")
+        self.assertEqual(len(receipt["variants"]), 3)
+        for variant in receipt["variants"]:
+            self.assertEqual(variant["build_properties"],
+                             release.build_properties(variant["name"], True))
+
+    def test_retained_profile_cannot_be_published_without_rebuild(self):
+        self.commit_scheduled_profile()
+        with self.assertRaisesRegex(release.ReleaseError, "requires a byte-identical rebuild"):
+            self.create(profile="scheduled-rev11")
+        self.assertFalse(self.output.exists())
+
+    def test_retained_profile_cannot_claim_archived_provenance(self):
+        self.commit_scheduled_profile()
+        with patch("build_firmware.build_firmware", side_effect=self.synthetic_build):
+            bundle = self.create(profile="scheduled-rev11", rebuild=True)
+        manifest = release.load_json(bundle / "release-manifest.json")
+        manifest["provenance"]["build"] = "archived-not-rebuilt"
+        del manifest["artifacts"]["build-verification.json"]
+        (bundle / "build-verification.json").unlink()
+        self.resign(bundle, manifest)
+        with self.assertRaisesRegex(release.ReleaseError, "requires a byte-identical rebuild"):
+            release.verify_bundle(bundle)
+
+    def test_retained_profile_requires_software_425_and_both_revision_11_sketches(self):
+        self.commit_scheduled_profile(version="4.24")
+        with self.assertRaisesRegex(release.ReleaseError, "requires software 4.25"):
+            self.create(profile="scheduled-rev11", rebuild=True)
+        self.commit_scheduled_profile(revision=10)
+        with self.assertRaisesRegex(release.ReleaseError, "revision"):
+            self.create(profile="scheduled-rev11", rebuild=True)
+        self.commit_scheduled_profile()
+        (self.repo / release.SKETCHES[1]).write_text("i2cReg[I2C_FW_REVISION] = 0x0a;\n")
+        self.commit = self.commit_files()
+        with self.assertRaisesRegex(release.ReleaseError, "revision"):
+            self.create(profile="scheduled-rev11", rebuild=True)
+        self.assertFalse(self.output.exists())
+
+    def test_retained_profile_rejects_weakened_trust_metadata(self):
+        self.commit_scheduled_profile()
+        with patch("build_firmware.build_firmware", side_effect=self.synthetic_build):
+            bundle = self.create(profile="scheduled-rev11", rebuild=True)
+        manifest = release.load_json(bundle / "release-manifest.json")
+        manifest["compatibility"]["rtc_trust"] = "volatile trust"
+        self.resign(bundle, manifest)
+        with self.assertRaisesRegex(release.ReleaseError, "profile metadata"):
+            release.verify_bundle(bundle)
+
+    def test_retained_profile_rejects_historical_build_flags(self):
+        self.commit_scheduled_profile()
+        with patch("build_firmware.build_firmware", side_effect=self.synthetic_build):
+            bundle = self.create(profile="scheduled-rev11", rebuild=True)
+        receipt_path = bundle / "build-verification.json"
+        receipt = release.load_json(receipt_path)
+        receipt["variants"][0]["build_properties"] = release.build_properties("standard", False)
+        receipt_path.write_bytes(release.json_bytes(receipt))
+        self.resign(bundle)
+        with self.assertRaisesRegex(release.ReleaseError, "Wrong build properties"):
+            release.verify_bundle(bundle)
+
+    def test_retained_profile_rebuilt_mismatch_never_publishes(self):
+        self.commit_scheduled_profile()
+
+        def mismatch(source, output, cli):
+            receipt = self.synthetic_build(source, output, cli)
+            (output / "WittyPi4_Mini.ino.hex").write_bytes(image(b"\x09\x08\x07\x06"))
+            return receipt
+
+        with patch("build_firmware.build_firmware", side_effect=mismatch):
+            with self.assertRaisesRegex(release.ReleaseError, "differs from committed HEX"):
+                self.create(profile="scheduled-rev11", rebuild=True)
+        self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_historical_scheduled_profile_still_archives_and_rebuilds(self):
+        self.commit_scheduled_profile(revision=10, version="4.24")
+        archived = self.create(profile="scheduled-rev10")
+        self.assertEqual(release.verify_bundle(archived)["provenance"]["build"],
+                         "archived-not-rebuilt")
+        with patch("build_firmware.build_firmware", side_effect=self.synthetic_build):
+            rebuilt = self.create(profile="scheduled-rev10", rebuild=True,
+                                  output=self.root / "rebuilt")
+        manifest = release.verify_bundle(rebuilt)
+        self.assertEqual(manifest["provenance"]["build"], "rebuilt-byte-identical")
+        self.assertEqual(manifest["software_version"], "4.24")
+        self.assertNotIn("rtc_trust", manifest["compatibility"])
+
     def test_export_is_deterministic_and_ignores_dirty_worktree(self):
         first = self.create()
         first_bytes = {path.name: path.read_bytes() for path in first.iterdir()}
@@ -356,6 +516,27 @@ class ReleaseTests(unittest.TestCase):
                 self.resign(bundle)
                 with self.assertRaises(release.ReleaseError):
                     release.verify_bundle(bundle)
+
+
+class HistoricalBundleTests(unittest.TestCase):
+    def test_published_historical_bundles_keep_offline_verification(self):
+        root = Path(__file__).resolve().parents[2] / "release"
+        bundles = (
+            ("wp4-4.23-fw7-d466cbc18aae", "legacy-rev7", "archived-not-rebuilt"),
+            ("wp4-4.23-fw9-8159567738cd", "atomic-rev9", "rebuilt-byte-identical"),
+            ("wp4-4.23-fw9-ca63d2145fa2", "atomic-rev9", "rebuilt-byte-identical"),
+            ("wp4-4.24-fw10-234f89a73a42", "scheduled-rev10", "rebuilt-byte-identical"),
+        )
+        # Verification consumes published bytes; it never rebuilds/backports them.
+        with patch("release.git", side_effect=AssertionError("Historical verification used Git")):
+            with patch("build_firmware.build_firmware",
+                       side_effect=AssertionError("Historical verification tried to rebuild")):
+                for name, profile, provenance in bundles:
+                    with self.subTest(bundle=name):
+                        manifest = release.verify_bundle(root / name)
+                        self.assertEqual(manifest["profile"], profile)
+                        self.assertEqual(manifest["provenance"]["build"], provenance)
+                        self.assertNotIn("rtc_trust", manifest["compatibility"])
 
 
 class IntelHexTests(unittest.TestCase):

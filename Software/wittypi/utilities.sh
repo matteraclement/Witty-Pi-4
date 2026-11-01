@@ -86,6 +86,7 @@ if [ -z ${I2C_MC_ADDRESS+x} ]; then
   readonly I2C_RTC_WEEKDAY_ALARM=69
   readonly I2C_RTC_TIMER_VALUE=70
   readonly I2C_RTC_TIMER_MODE=71
+  readonly I2C_RTC_TRUST=74
 
   readonly HALT_PIN=4    # halt by GPIO-4 (BCM naming)
   readonly SYSUP_PIN=17  # output SYS_UP signal on GPIO-17 (BCM naming)
@@ -119,7 +120,7 @@ if [ -z ${I2C_MC_ADDRESS+x} ]; then
 
   TIME_UNKNOWN=0
 
-  SOFTWARE_VERSION='4.24'
+  SOFTWARE_VERSION='4.25'
 fi
 
 
@@ -201,41 +202,38 @@ get_sys_timestamp()
 
 rtc_has_bad_time()
 {
-  local snapshot
-  snapshot=$(read_rtc_snapshot) || return 1
-  local -a rtc
-  read -r -a rtc <<< "$snapshot"
-  if (( (rtc[0] & 0x80) || rtc[6] == 0 )); then
-    echo 1
-  else
-    echo 0
+  rtc_is_trusted || return 1
+  get_rtc_timestamp >/dev/null || return 1
+  echo 0
+}
+
+# Revision 11 retains calendar trust across controller resets. Neither a
+# plausible calendar nor a successful bus transfer is evidence of that trust.
+rtc_is_trusted()
+{
+  local revision trust
+  revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION") || return 1
+  if [[ $revision != 0x0b ]]; then
+    echo 'Retained RTC trust requires reviewed firmware revision 11.' >&2
+    return 1
+  fi
+  trust=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_RTC_TRUST") || return 1
+  if [[ $trust != 0x01 ]]; then
+    echo 'RTC calendar is untrusted; repair it from an independent time source.' >&2
+    return 1
   fi
 }
 
-# Firmware revision 8 adds a seven-byte calendar read starting at Seconds.
 read_rtc_snapshot()
 {
-  local revision
-  revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION") || return 1
-  if [[ ! $revision =~ ^0x[0-9a-fA-F]{2}$ ]] || (( revision < 8 )); then
-    echo 'RTC snapshot requires firmware revision 8 or newer.' >&2
-    return 1
-  fi
+  rtc_is_trusted || return 1
   local snapshot
   snapshot=$(i2ctransfer -y "$I2C_BUS" "w1@$I2C_MC_ADDRESS" "$I2C_RTC_SECONDS" r7) || return 1
   if [[ ! $snapshot =~ ^[[:blank:]]*0x[0-9a-fA-F]{2}([[:blank:]]+0x[0-9a-fA-F]{2}){6}[[:blank:]]*$ ]]; then
     echo 'Incomplete or malformed RTC snapshot.' >&2
     return 1
   fi
-  local -a rtc
-  read -r -a rtc <<< "$snapshot"
-  local value
-  for value in "${rtc[@]}"; do
-    if (( value == 255 )); then
-      echo 'RTC read failed on the internal I2C bus.' >&2
-      return 1
-    fi
-  done
+  rtc_is_trusted || return 1
   echo "$snapshot"
 }
 
@@ -247,7 +245,7 @@ rtc_contract_mode()
   revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION") || return 1
   [[ $revision =~ ^0x[0-9a-fA-F]{2}$ ]] || return 1
   if (( revision < 10 )); then echo 0; return; fi
-  (( revision == 10 )) || return 1
+  (( revision == 10 || revision == 11 )) || return 1
   mode=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" 13) || return 1
   [[ $mode =~ ^0x0[01]$ ]] || return 1
   echo "$((mode))"
@@ -256,6 +254,7 @@ rtc_contract_mode()
 legacy_alarm_owner()
 {
   local mode
+  rtc_is_trusted || return 1
   mode=$(rtc_contract_mode) || return 1
   if [[ $mode != 0 ]]; then
     echo 'Legacy alarm editing is disabled in the managed UTC contract profile.' >&2
@@ -265,10 +264,22 @@ legacy_alarm_owner()
 
 get_rtc_timestamp()
 {
-  local snapshot
+  local snapshot mode
   snapshot=$(read_rtc_snapshot) || return 1
+  mode=$(rtc_contract_mode) || return 1
+  rtc_snapshot_timestamp "$snapshot" "$mode"
+}
+
+# Decode only complete, canonical calendars, including weekday and real dates.
+rtc_snapshot_timestamp()
+{
   local -a rtc
-  read -r -a rtc <<< "$snapshot"
+  read -r -a rtc <<< "$1"
+  [[ ${#rtc[@]} == 7 ]] || return 1
+  local value
+  for value in "${rtc[@]}"; do
+    [[ $value =~ ^0x[0-9a-fA-F]{2}$ ]] || return 1
+  done
   if (( rtc[0] & 0x80 )); then
     echo 'RTC oscillator stopped; time is not reliable.' >&2
     return 1
@@ -282,7 +293,8 @@ get_rtc_timestamp()
     fi
   done
   if (( rtc[0] > 0x59 || rtc[1] > 0x59 || rtc[2] > 0x23 ||
-        rtc[3] < 1 || rtc[3] > 0x31 || rtc[5] < 1 || rtc[5] > 0x12 )); then
+        rtc[3] < 1 || rtc[3] > 0x31 || rtc[4] > 6 ||
+        rtc[5] < 1 || rtc[5] > 0x12 )); then
     echo 'RTC calendar field out of range.' >&2
     return 1
   fi
@@ -292,13 +304,16 @@ get_rtc_timestamp()
   local day=$(bcd2dec "${rtc[3]}")
   local month=$(bcd2dec "${rtc[5]}")
   local year=$(bcd2dec "${rtc[6]}")
-  local mode
-  mode=$(rtc_contract_mode) || return 1
-  if [[ $mode == 1 ]]; then
-    date -u --date="$((2000 + year))-$month-$day $hour:$min:$sec" +%s
-  else
-    date --date="$((2000 + year))-$month-$day $hour:$min:$sec" +%s
-  fi
+  local timestamp canonical
+  local -a zone=() expected
+  [[ $2 == 1 ]] && zone=(-u)
+  timestamp=$(date "${zone[@]}" --date="$((2000 + year))-$month-$day $hour:$min:$sec" +%s) || return 1
+  canonical=$(date "${zone[@]}" -d "@$timestamp" '+0x%S 0x%M 0x%H 0x%d 0x0%w 0x%m 0x%y') || return 1
+  read -r -a expected <<< "$canonical"
+  for index in "${!rtc[@]}"; do
+    (( rtc[index] == expected[index] )) || return 1
+  done
+  echo "$timestamp"
 }
 
 get_rtc_time()
@@ -341,10 +356,14 @@ hex2dec()
 
 get_startup_time()
 {
-  sec=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM1))
-  min=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_MINUTE_ALARM1))
-  hour=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_HOUR_ALARM1))
-  date=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_DAY_ALARM1))
+  legacy_alarm_owner || return 1
+  local sec min hour date
+  sec=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_CONF_SECOND_ALARM1") || return 1
+  min=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_CONF_MINUTE_ALARM1") || return 1
+  hour=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_CONF_HOUR_ALARM1") || return 1
+  date=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_CONF_DAY_ALARM1") || return 1
+  sec=$(bcd2dec "$sec"); min=$(bcd2dec "$min")
+  hour=$(bcd2dec "$hour"); date=$(bcd2dec "$date")
   printf '%02d %02d:%02d:%02d\n' $date $hour $min $sec
 }
 
@@ -352,11 +371,11 @@ set_startup_time()
 {
   legacy_alarm_owner || return 1
   sec=$(dec2bcd $4)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM1 $sec
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM1 $sec || return 1
   min=$(dec2bcd $3)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_MINUTE_ALARM1 $min
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_MINUTE_ALARM1 $min || return 1
   hour=$(dec2bcd $2)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_HOUR_ALARM1 $hour
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_HOUR_ALARM1 $hour || return 1
   date=$(dec2bcd $1)
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_DAY_ALARM1 $date
 }
@@ -364,18 +383,22 @@ set_startup_time()
 clear_startup_time()
 {
   legacy_alarm_owner || return 1
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM1 0x00
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_MINUTE_ALARM1 0x00
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_HOUR_ALARM1 0x00
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM1 0x00 || return 1
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_MINUTE_ALARM1 0x00 || return 1
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_HOUR_ALARM1 0x00 || return 1
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_DAY_ALARM1 0x00
 }
 
 get_shutdown_time()
 {
-  sec=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM2))
-  min=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_MINUTE_ALARM2))
-  hour=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_HOUR_ALARM2))
-  date=$(bcd2dec $(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_DAY_ALARM2))
+  legacy_alarm_owner || return 1
+  local sec min hour date
+  sec=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_CONF_SECOND_ALARM2") || return 1
+  min=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_CONF_MINUTE_ALARM2") || return 1
+  hour=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_CONF_HOUR_ALARM2") || return 1
+  date=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_CONF_DAY_ALARM2") || return 1
+  sec=$(bcd2dec "$sec"); min=$(bcd2dec "$min")
+  hour=$(bcd2dec "$hour"); date=$(bcd2dec "$date")
   printf '%02d %02d:%02d:%02d\n' $date $hour $min $sec
 }
 
@@ -383,11 +406,11 @@ set_shutdown_time()
 {
   legacy_alarm_owner || return 1
   sec=$(dec2bcd $4)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM2 $sec
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM2 $sec || return 1
   min=$(dec2bcd $3)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_MINUTE_ALARM2 $min
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_MINUTE_ALARM2 $min || return 1
   hour=$(dec2bcd $2)
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_HOUR_ALARM2 $hour
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_HOUR_ALARM2 $hour || return 1
   date=$(dec2bcd $1)
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_DAY_ALARM2 $date
 }
@@ -395,52 +418,84 @@ set_shutdown_time()
 clear_shutdown_time()
 {
   legacy_alarm_owner || return 1
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM2 0x00
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_MINUTE_ALARM2 0x00
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_HOUR_ALARM2 0x00
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_SECOND_ALARM2 0x00 || return 1
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_MINUTE_ALARM2 0x00 || return 1
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_HOUR_ALARM2 0x00 || return 1
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_DAY_ALARM2 0x00
 }
 
 net_to_system()
 {
-  local net_ts=$(get_network_timestamp)
-  if [[ "$net_ts" != "-1" ]]; then
+  local net_ts
+  net_ts=$(get_network_timestamp) || return 1
+  if [[ $net_ts =~ ^[0-9]+$ ]] && (( net_ts >= 946684800 && net_ts <= 4102444799 )); then
     log '  Applying network time to system...'
-    sudo date -u -s @$net_ts >/dev/null
+    sudo date -u -s "@$net_ts" >/dev/null || return 1
     log '  Done :-)'
   else
     log '  Can not get legit network time.'
+    return 1
+  fi
+}
+
+# Inspect contract state without reading the ordinary (possibly untrusted) RTC.
+rtc_calendar_writable()
+{
+  local revision response
+  revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION") || return 1
+  [[ $revision == 0x0b ]] || return 1
+  response=$(i2ctransfer -y "$I2C_BUS" "w1@$I2C_MC_ADDRESS" 73 r13) || return 1
+  [[ $response =~ ^[[:blank:]]*0x[0-9a-fA-F]{2}([[:blank:]]+0x[0-9a-fA-F]{2}){12}[[:blank:]]*$ ]] || return 1
+  local -a status
+  read -r -a status <<< "$response"
+  (( status[0] == 1 && status[1] <= 7 && status[2] == 0 &&
+      status[3] <= 1 && status[12] <= 120 )) || return 1
+  local boot=$((status[4] | status[5] << 8))
+  local generation=$((status[6] | status[7] << 8))
+  local due=$((status[8] | status[9] << 8 | status[10] << 16 | status[11] << 24))
+  if (( status[1] != 0 && status[1] != 6 && (!boot || !generation || !due) )); then
+    return 1
+  fi
+  if (( (status[1] == 3 && status[12] >= 60) ||
+        (status[1] == 4 && (status[12] < 60 || status[12] >= 120)) ||
+        (status[1] == 5 && status[12] != 120) ||
+        (status[1] == 2 && status[12] >= 120) )); then
+    return 1
+  fi
+  if (( status[1] == 1 || status[1] == 2 )); then
+    echo 'Disarm the scheduled contract before changing the RTC calendar.' >&2
+    return 1
   fi
 }
 
 system_to_rtc()
 {
-  log '  Writing system time to RTC...'
-  local revision
-  revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION") || return 1
-  if [[ ! $revision =~ ^0x[0-9a-fA-F]{2}$ ]] || (( revision < 9 )); then
-    log '  Atomic RTC writes require firmware revision 9 or newer.' >&2
-    return 1
-  fi
+  log '  Writing independently accepted system time to RTC...'
+  rtc_calendar_writable || return 1
   local sys_ts fields mode
   mode=$(rtc_contract_mode) || return 1
   sys_ts=$(get_sys_timestamp) || return 1
-  if [[ $mode == 1 ]]; then
-    fields=$(date -u -d "@$sys_ts" '+0x%S 0x%M 0x%H 0x%d 0x0%w 0x%m 0x%y') || return 1
-  else
-    fields=$(date -d "@$sys_ts" '+0x%S 0x%M 0x%H 0x%d 0x0%w 0x%m 0x%y') || return 1
-  fi
-  local -a calendar
+  [[ $sys_ts =~ ^[0-9]+$ ]] && (( sys_ts >= 946684800 && sys_ts <= 4102444799 )) || return 1
+  local -a zone=() calendar
+  [[ $mode == 1 ]] && zone=(-u)
+  fields=$(date "${zone[@]}" -d "@$sys_ts" '+0x%S 0x%M 0x%H 0x%d 0x0%w 0x%m 0x%y') || return 1
   read -r -a calendar <<< "$fields"
+  local accepted_ts
+  accepted_ts=$(rtc_snapshot_timestamp "$fields" "$mode") || return 1
+  (( accepted_ts == sys_ts )) || return 1
   if ! i2ctransfer -y "$I2C_BUS" "w8@$I2C_MC_ADDRESS" "$I2C_RTC_SECONDS" "${calendar[@]}"; then
     log '  Failed to write RTC calendar.' >&2
     return 1
   fi
-  # The MCU acknowledges the host before completing the internal-bus write.
-  # Verify the whole calendar, allowing elapsed time and one pending RTC tick.
-  local rtc_ts end_ts
-  if ! rtc_ts=$(get_rtc_timestamp) || ! end_ts=$(get_sys_timestamp) ||
-      (( rtc_ts < sys_ts || rtc_ts > end_ts + 1 )); then
+  # Trust must be restored by firmware before a complete valid readback can be
+  # accepted. Bound elapsed host time to five seconds, plus one RTC tick; compare
+  # every field to the exact expected forward calendar, including rollovers.
+  local snapshot rtc_ts end_ts
+  if ! snapshot=$(read_rtc_snapshot) ||
+      ! rtc_ts=$(rtc_snapshot_timestamp "$snapshot" "$mode") ||
+      ! end_ts=$(get_sys_timestamp) || [[ ! $end_ts =~ ^[0-9]+$ ]] ||
+      (( end_ts < sys_ts || end_ts - sys_ts > 5 ||
+         rtc_ts < sys_ts || rtc_ts > end_ts + 1 )); then
     log '  Failed to verify RTC calendar write.' >&2
     return 1
   fi
@@ -485,12 +540,7 @@ trim()
 
 current_timestamp()
 {
-  local rtctimestamp=$(get_rtc_timestamp)
-  if [ "$rtctimestamp" == "" ] ; then
-    echo $(date +%s)
-  else
-    echo $rtctimestamp
-  fi
+  get_rtc_timestamp
 }
 
 wittypi_home="`dirname \"$0\"`"
@@ -520,6 +570,10 @@ log()
 i2c_read()
 {
   local retry=0
+  # Low-level calendar/alarm reads must not bypass the ordinary trust gate.
+  if (( $2 == I2C_MC_ADDRESS && (($3 >= 27 && $3 <= 36) || ($3 >= 58 && $3 <= 71)) )); then
+    rtc_is_trusted || return 1
+  fi
   if [ $# -gt 3 ] ; then
     retry=$4
   fi
@@ -541,16 +595,33 @@ i2c_read()
 
 i2c_write()
 {
+  if (( $2 == I2C_MC_ADDRESS )); then
+    if (( $3 == I2C_RTC_CTRL1 || ($3 >= 58 && $3 <= 64) || $3 == I2C_RTC_TRUST )); then
+      echo 'Use the verified full-calendar transaction; direct RTC mutation is disabled.' >&2
+      return 1
+    fi
+    if (( ($3 >= 27 && $3 <= 36) || ($3 >= 65 && $3 <= 71) )); then
+      legacy_alarm_owner || return 1
+    fi
+    if (( $3 == I2C_RTC_CTRL2 )); then
+      local control
+      control=$(i2c_read "$1" "$2" "$3") || return 1
+      # Preserve alarm-flag acknowledgement, but not RTC reset/control changes.
+      (( $4 == (control & 0xBF) )) || return 1
+    fi
+  fi
   local retry=0
   if [ $# -gt 4 ] ; then
     retry=$5
   fi
-  i2cset -y $1 $2 $3 $4
-  local result=$(i2c_read $1 $2 $3)
+  i2cset -y "$1" "$2" "$3" "$4" || return 1
+  local result
+  result=$(i2c_read "$1" "$2" "$3") || return 1
   if [ "$result" != $(dec2hex "$4") ] ; then
     retry=$(( $retry + 1 ))
     if [ $retry -eq 4 ] ; then
       log "I2C write $1 $2 $3 $4 failed (result=$result), and no more retry."
+      return 1
     else
       sleep 1
       log2file "I2C write $1 $2 $3 $4 failed (result=$result), retrying $retry ..."
@@ -587,13 +658,13 @@ clear_alarm_flags()
 {
   local ctrl2=0x0
   if [ -z "$1" ]; then
-    ctrl2=$(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_CTRL2)
+    ctrl2=$(i2c_read ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_CTRL2) || return 1
   else
     ctrl2=$1
   fi
   ctrl2=$(($ctrl2&0xBF))
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_CTRL2 $ctrl2
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_FLAG_ALARM1 0
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_RTC_CTRL2 $ctrl2 || return 1
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_FLAG_ALARM1 0 || return 1
   i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_FLAG_ALARM2 0
 }
 

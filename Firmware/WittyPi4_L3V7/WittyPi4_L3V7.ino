@@ -1,7 +1,7 @@
 /**
  * Firmware for WittyPi 4 L3V7
  * 
- * Revision: 10
+ * Revision: 11
  */
  
 #define I2C_TIMEOUT 2
@@ -11,7 +11,7 @@
 #define SCL_PORT PORTA
 #include "SoftWireMaster.h"
 
-#include <WireS.h>
+#include "BoardWire.h"
 #include <core_timers.h>
 #include <avr/sleep.h>
 #include <EEPROM.h>
@@ -211,6 +211,10 @@ void contractReceive(int count);
 void contractReply();
 void contractInterrupted();
 boolean contractActive();
+boolean calendarTrusted();
+boolean calendarPending();
+boolean contractLocked();
+void calendarWrite();
 
 void setup() {
   TOCPMCOE = 0; // Dedicated controller timers never drive compare-output pins.
@@ -301,13 +305,13 @@ void initializeRegisters() {
   for (byte i = 0; i < I2C_REG_COUNT; i ++) {
     byte val = EEPROM.read(i);
     if (val == 255) {
-      EEPROM.update(i, i2cReg[i]);
+      eeprom_update_byte((byte *)(uintptr_t)i, i2cReg[i]);
     } else {
       i2cReg[i] = val;
     } 
   }
   // Capabilities belong to this firmware, not the EEPROM from an older image.
-  i2cReg[I2C_FW_REVISION] = 0x0A;
+  i2cReg[I2C_FW_REVISION] = 0x0B;
 
   // copy some EEPROM backed data to PCF85063 and LM75B
   writeToDevice(ADDRESS_LM75B, I2C_LM75B_TOS - I2C_LM75B_TEMPERATURE, &i2cReg[I2C_CONF_OVER_TEMP_POINT], 1);
@@ -484,7 +488,11 @@ uint16_t adjusted(uint16_t raw, int16_t delta) {
 }
 
 uint16_t scaledAdc(byte pin, uint16_t fullScale) {
-  return ((uint32_t)fullScale * analogRead(pin)) / 1023;
+  uint32_t product=(uint32_t)fullScale * analogRead(pin);
+  // For this board's fullScale<=62700, high+(product&1023) fits uint16_t.
+  // product=high*1023+high+low: exact division without a 32-bit divider.
+  uint16_t high=product >> 10;
+  return high + (high + (uint16_t)(product & 1023)) / 1023;
 }
 
 // get voltage at specific pin
@@ -638,6 +646,11 @@ void receiveEvent(int count) {
   if (TinyWireS.available()) {
     i2cIndex = TinyWireS.read();
     if (i2cIndex == 72) { contractReceive(count); return; }
+    if (i2cIndex == I2C_RTC_RAM_BYTE) return; // Retained transaction state is readonly.
+    if (i2cIndex == I2C_RTC_SECONDS) {
+      if (count == 8 && !contractLocked()) calendarWrite();
+      return;
+    }
     if (i2cIndex >= I2C_LM75B_TEMPERATURE && i2cIndex <= I2C_RTC_TIMER_MODE) {
       byte address = ADDRESS_RTC;
       byte index = i2cIndex - I2C_RTC_CTRL1;
@@ -647,10 +660,10 @@ void receiveEvent(int count) {
         index = i2cIndex - I2C_LM75B_TEMPERATURE;
         length = (i2cIndex == I2C_LM75B_TEMPERATURE) ? 0 : ((i2cIndex == I2C_LM75B_CONF) ? 1 : 2);
       } else if (i2cIndex >= I2C_RTC_SECONDS && i2cIndex <= I2C_RTC_YEARS) {
-        // Calendar writes must contain seconds through years in one access.
-        if (i2cIndex != I2C_RTC_SECONDS) return;
-        length = 7;
+        return;
       }
+      if (i2cIndex == I2C_RTC_CTRL1 && (contractLocked() || !calendarPending())) return;
+      if (i2cIndex >= I2C_RTC_SECOND_ALARM && !calendarTrusted()) return;
       if (count != length + 1) return;
       softWireMaster.beginTransmission(address);
       softWireMaster.write(index);
@@ -659,6 +672,7 @@ void receiveEvent(int count) {
       }
       softWireMaster.endTransmission();
     } else if (i2cIndex >= I2C_CONF_ADDRESS && i2cIndex < I2C_REG_COUNT) {  // non-virtual, writable i2c register
+      if (i2cIndex >= I2C_CONF_SECOND_ALARM1 && i2cIndex <= I2C_CONF_WEEKDAY_ALARM2 && !calendarTrusted()) return;
       if (TinyWireS.available()) {
         // clear alarm triggered flag if alam is changed
         if (i2cIndex >= I2C_CONF_SECOND_ALARM1 && i2cIndex <= I2C_CONF_WEEKDAY_ALARM1) {
@@ -673,7 +687,6 @@ void receiveEvent(int count) {
 
         // if RTC offset value is changed, immediately update to RTC
         if (i2cIndex == I2C_CONF_RTC_OFFSET) {
-          updateRegister(I2C_RTC_OFFSET, i2cReg[I2C_CONF_RTC_OFFSET]);
           writeToDevice(ADDRESS_RTC, I2C_RTC_OFFSET - I2C_RTC_CTRL1, &i2cReg[I2C_CONF_RTC_OFFSET], 1);
         }
       }
@@ -685,6 +698,12 @@ void receiveEvent(int count) {
 // i2c master requests data from this device (master reads from this device)
 void requestEvent() {
   if (i2cIndex == 73) { contractReply(); return; }
+  if (i2cIndex == 74) { TinyWireS.write(calendarTrusted()); return; }
+  if (i2cIndex >= I2C_RTC_SECONDS && i2cIndex <= I2C_RTC_WEEKDAY_ALARM && !calendarTrusted()) {
+    byte count = i2cIndex == I2C_RTC_SECONDS ? 7 : 1;
+    while (count--) TinyWireS.write((byte)0xFF);
+    return;
+  }
   switch (i2cIndex) {
     case I2C_VOLTAGE_IN_I:
       getInputVoltage();
@@ -862,7 +881,7 @@ ISR (TIM1_OVF_vect) {
 void updateRegister(byte index, byte value) {
   if (index < I2C_REG_COUNT) {
     i2cReg[index] = value;
-    EEPROM.update(index, value);
+    eeprom_update_byte((byte *)(uintptr_t)index, value);
   }
 }
 
@@ -910,6 +929,7 @@ boolean canTriggerAlarm() {
 
 // process the alarm from RTC, if exists
 void processAlarmIfNeeded() {
+  if (!calendarTrusted()) return;
   // Keep seconds through day in one RTC access across clock rollovers.
   if (readFromDevice(ADDRESS_RTC, I2C_RTC_SECONDS - I2C_RTC_CTRL1, 4) != 4) return;
   byte seconds = softWireMaster.read();
@@ -963,9 +983,7 @@ void reset_rtc_alarm() {
 
 // copy alarm data to RTC's alarm registers
 void copyAlarm(byte offset) {
-  for (byte i = 0; i < 4; i ++) {
-    writeToDevice(ADDRESS_RTC, 0x0B + i, &i2cReg[offset + i], 1);
-  }
+  writeToDevice(ADDRESS_RTC, 0x0B, &i2cReg[offset], 4);
 }
 
 
@@ -1020,30 +1038,31 @@ byte readFromDevice(byte address, byte index, byte count) {
 
 
 // software I2C master write data to device on internal I2C bus
-void writeToDevice(byte address, byte index, byte* data, byte count) {
+byte writeToDevice(byte address, byte index, byte* data, byte count) {
   softWireMaster.beginTransmission(address);
   softWireMaster.write(index);
   for (byte i = 0; i < count; i ++) {
     softWireMaster.write(data[i]);
   }
-  softWireMaster.endTransmission();
+  return softWireMaster.endTransmission();
 }
 
 
 // convert BCD data to DEC data
 byte bcd2dec(byte bcd) {
-  return (bcd / 16 * 10) + (bcd % 16);
+  return bcd - 6 * (bcd >> 4);
 }
 
 
 long getAlarmTimestamp(byte start) {
-  return getTimestamp(bcd2dec(i2cReg[start + 3]), bcd2dec(i2cReg[start + 2]),
-    bcd2dec(i2cReg[start + 1]), bcd2dec(i2cReg[start]));
+  byte fields[4];
+  for (byte i=0; i<4; ++i) fields[i]=bcd2dec(i2cReg[start+i]);
+  return getTimestamp(fields[3], fields[2], fields[1], fields[0]);
 }
 
 // get timestamp for given date and time
 uint32_t getTimestamp(uint16_t date, byte hours, byte minutes, byte seconds) {
-  return (((uint32_t)date * 24 + hours) * 60 + minutes) * 60 + seconds;
+  return (uint32_t)date * 86400UL + ((uint16_t)hours * 60 + minutes) * 60UL + seconds;
 }
 
 
@@ -1068,8 +1087,6 @@ void adjustRTCIfNeeded() {
       char adj = 0;
       if (t < 26) {
         adj = (t - 26) * 55 / 434;
-      } else if (t > 32 && t <= 42) {
-        adj = 0;
       } else if (t > 42) {
         adj = (-200 - (t - 42) * 60) / 217;
       }
@@ -1094,11 +1111,7 @@ char offset2Value(byte offset) {
 
 // convert actual signed value to offset value
 byte value2Offset(char value) {
-  if (value >= 0) {
-    return (byte)value;
-  } else {
-    return (0x80 + value);
-  }
+  return (byte)value & 0x7F;
 }
 
 #include "ScheduledContract.h"
