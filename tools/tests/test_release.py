@@ -582,6 +582,7 @@ class HistoricalBundleTests(unittest.TestCase):
             ("wp4-4.23-fw9-ca63d2145fa2", "atomic-rev9", "rebuilt-byte-identical"),
             ("wp4-4.24-fw10-234f89a73a42", "scheduled-rev10", "rebuilt-byte-identical"),
             ("wp4-4.25-fw11-286a7d43c1b4", "scheduled-rev11", "rebuilt-byte-identical"),
+            ("wp4-4.26-fw12-4f7c60d444d9", "scheduled-rev12", "rebuilt-byte-identical"),
         )
         # Verification consumes published bytes; it never rebuilds/backports them.
         with patch("release.git", side_effect=AssertionError("Historical verification used Git")):
