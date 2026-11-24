@@ -148,7 +148,8 @@ i2cget() {
   esac
 }
 i2cset() {
-  printf 'set %s %s\n' "$4" "$5" >> "$TRACE"
+  printf 'set %s %s%s\n' "$4" "$5" "${6:+ $6}" >> "$TRACE"
+  [[ $4 != "${FAIL_SET:-}" ]] || return 1
   printf '0x%02x\n' "$5" > "$REGISTER_PREFIX$4"
   if [[ $4 == 55 ]]; then printf '0x%02x\n' "$5" > "$CONTROL_FILE"; fi
 }
@@ -318,6 +319,35 @@ sleep() { exit 0; }
         self.assertNotIn('set 54 ', trace)
         self.assertIn('set 52 ', trace)  # Non-time temperature protection remains.
         self.assertIn('set 53 ', trace)
+
+    def test_temperature_setters_disarm_retarget_then_arm(self):
+        # (action, LM75B limit mirror, configured point) registers per setter.
+        setters = (('over', 45, 53, 46), ('below', 43, 52, 44))
+        for kind, action, mirror, point in setters:
+            command = f'set_{kind}_temperature_action 1 -5'
+            with self.subTest(kind=kind):
+                result, trace = self.vendor(f'{command} && get_{kind}_temperature_point')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, '-5')  # Menu reads the mirror back.
+                writes = [line for line in trace.splitlines() if line.startswith('set ')]
+                # The firmware forwards only complete two-byte limits: word mode.
+                self.assertEqual(writes, [f'set {action} 0x00', f'set {mirror} 251 w',
+                    f'set {point} 251', f'set {action} 1'])
+            with self.subTest(kind=kind, failed='disarm'):
+                result, trace = self.vendor(command, FAIL_SET=action)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual([line for line in trace.splitlines()
+                    if line.startswith('set ')], [f'set {action} 0x00'])
+            with self.subTest(kind=kind, failed='point'):
+                result, trace = self.vendor(command, FAIL_SET=point)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(f'set {action} 1', trace)  # Left disarmed.
+            with self.subTest(kind=kind, failed='mirror'):
+                # The firmware ignores the mirror; it does not block arming.
+                result, trace = self.vendor(command, FAIL_SET=mirror)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                writes = [line for line in trace.splitlines() if line.startswith('set ')]
+                self.assertEqual(writes[-1], f'set {action} 1')
 
 
 if __name__ == '__main__':

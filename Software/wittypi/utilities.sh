@@ -840,26 +840,46 @@ below_temperature_action()
   fi
 }
 
+# Registers 52/53 map to two-byte LM75B limits, and the firmware forwards only
+# complete writes: send the point as an i2cset word (point byte, then a zero
+# fraction byte) and verify the point byte read back.
+lm75b_limit_write()
+{
+  local result
+  i2cset -y "${I2C_BUS}" "$I2C_MC_ADDRESS" "$1" "$2" w || return 1
+  result=$(i2c_read "${I2C_BUS}" "$I2C_MC_ADDRESS" "$1") || return 1
+  if [ "$result" != "$(dec2hex "$2")" ]; then
+    log "LM75B limit write $1 $2 failed (result=$result)."
+    return 1
+  fi
+}
+
+# Disarm, retarget, then arm: no intermediate state pairs an enabled action with
+# a point that was not set for it. A failed write leaves the action disarmed.
+# The firmware compares against the configured point, not the LM75B mirror, so
+# the mirror write's result does not decide whether the action is armed.
 set_over_temperature_action()
 {
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_OVER_TEMP_ACTION $1
   local t=$2
   if [ $(($2<0)) == '1' ]; then
     t=$(($2+256))
   fi
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_LM75B_TOS $t
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_OVER_TEMP_POINT $t
+  clear_over_temperature_action || return 1
+  lm75b_limit_write $I2C_LM75B_TOS $t
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_OVER_TEMP_POINT $t || return 1
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_OVER_TEMP_ACTION $1
 }
 
 set_below_temperature_action()
 {
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_BELOW_TEMP_ACTION $1
   local t=$2
   if [ $(($2<0)) == '1' ]; then
     t=$(($2+256))
   fi
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_LM75B_THYST $t
-  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_BELOW_TEMP_POINT $t
+  clear_below_temperature_action || return 1
+  lm75b_limit_write $I2C_LM75B_THYST $t
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_BELOW_TEMP_POINT $t || return 1
+  i2c_write ${I2C_BUS} $I2C_MC_ADDRESS $I2C_CONF_BELOW_TEMP_ACTION $1
 }
 
 clear_over_temperature_action()

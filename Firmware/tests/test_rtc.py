@@ -34,6 +34,9 @@ using boolean = bool;
 #define I2C_READ 1
 byte rtc[18], nextRtc[18], pointerReg;
 bool expectPointer, reading, rollover, rtcAddress;
+// LM75B limit registers as [pointer][MSB, LSB]; byte counts per transaction.
+byte lm75[4][2], lmBytes;
+bool lmAddress;
 int clicks, nack, busReads, stops;
 int faultAt=-1, operations;
 bool corruptReadback;
@@ -59,6 +62,7 @@ void tickCalendar() {
 bool i2c_init_() { return true; }
 bool i2c_start_(uint8_t address) {
   rtcAddress=(address>>1)==0x51; expectPointer=true; reading=false;
+  lmAddress=(address>>1)==0x48; lmBytes=0;
   return nack != 1;
 }
 bool i2c_rep_start_(uint8_t address) {
@@ -71,6 +75,7 @@ bool i2c_write_(uint8_t value) {
   if (busOps++ == nackAt) return false;
   if (nack == 2) return false;
   if (expectPointer) { pointerReg=value; expectPointer=false; }
+  else if (lmAddress) { if (lmBytes<2) lm75[pointerReg&3][lmBytes++]=value; }
   else {
     if (rtcAddress && !(rejectPending && pointerReg==3 && value==0)) rtc[pointerReg]=value;
     ++pointerReg;
@@ -347,6 +352,23 @@ int main() {
 }
 """
 
+LM75B_LIMIT_SCENARIOS = r"""
+int main() {
+  softWireMaster.begin();
+  // Registers 52/53 forward only complete two-byte LM75B limits. The host
+  // setters send an i2cset word (point, then a zero fraction byte).
+  for (int reg: {I2C_LM75B_THYST, I2C_LM75B_TOS}) {
+    byte pointer=reg-I2C_LM75B_TEMPERATURE;
+    lm75[pointer][0]=0x4b; lm75[pointer][1]=0x80;
+    TinyWireS.request={byte(reg),0xFB,0x00}; TinyWireS.index=0; receiveEvent(3);
+    assert(lm75[pointer][0]==0xFB && lm75[pointer][1]==0x00);
+    TinyWireS.request={byte(reg),0x05}; TinyWireS.index=0; receiveEvent(2);
+    assert(lm75[pointer][0]==0xFB && lm75[pointer][1]==0x00); // Byte write dropped.
+  }
+  std::puts("PASS LM75B limits: word writes forwarded, byte writes dropped");
+}
+"""
+
 WRITE_DEVICE = r"""
 int main(int argc, char** argv) {
   assert(argc >= 5);
@@ -600,6 +622,12 @@ class RtcWrites(unittest.TestCase):
         for variant in ("WittyPi4", "WittyPi4_L3V7"):
             with self.subTest(variant=variant), tempfile.TemporaryDirectory() as d:
                 binary = compile_rtc(Path(d), variant, TRUST_SCENARIOS)
+                subprocess.run([str(binary)], check=True)
+
+    def test_lm75b_limits_accept_only_complete_word_writes(self):
+        for variant in ("WittyPi4", "WittyPi4_L3V7"):
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as d:
+                binary = compile_rtc(Path(d), variant, LM75B_LIMIT_SCENARIOS)
                 subprocess.run([str(binary)], check=True)
 
     def test_rollovers_through_host_and_firmware(self):

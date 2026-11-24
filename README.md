@@ -41,6 +41,15 @@ scheduled enforcement requires explicit UTC migration and matching downstream
 integration. Native Raspberry Pi behavior and historical WP4 bundles are unchanged;
 retained trust is not backported to those bundles.
 
+Temperature protection treats a failed LM75B read as no measurement: the firmware
+skips the over/below-temperature action and leaves the RTC offset unchanged for
+that pass, instead of decoding the failure as −1 °C. The menu's temperature
+setters disarm the action, write the point, then arm the new action; a failed
+point write leaves the action disabled. They write the LM75B limit mirror
+(registers 52/53) as a complete two-byte word, which the firmware requires, so
+the menu shows the new point immediately. The committed HEX include this change;
+the published `wp4-4.25-fw11-286a7d43c1b4` bundle does not.
+
 ### Immutable vendor releases
 
 [`release/`](release/) contains portable WP4 inputs for downstream integration:

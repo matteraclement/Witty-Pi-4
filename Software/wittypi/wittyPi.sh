@@ -236,9 +236,12 @@ configure_over_temperature_action()
   elif [ "$oa" == '1' ] || [ "$oa" == '2' ]; then
     read -p 'Input over temperature point (-30~80, value in Celsius degree): ' ot
     if [[ $ot =~ ^-?[0-9]+$ ]] && [ $(($ot>=-30)) == '1' ] && [ $(($ot<=80)) == '1' ]; then
-      set_over_temperature_action $oa $ot
-      local action=$(over_temperature_action $oa $ot)
-      log "  Over temperature action is set: $action"
+      if set_over_temperature_action $oa $ot; then
+        local action=$(over_temperature_action $oa $ot)
+        log "  Over temperature action is set: $action"
+      else
+        log '  Over temperature action is not set (I2C write failed); the action may be disabled.'
+      fi
       sleep 2
     else
       echo 'Please input integer between -30 and 80...'
@@ -257,9 +260,12 @@ configure_below_temperature_action()
   elif [ "$ba" == '1' ] || [ "$ba" == '2' ]; then
     read -p 'Input below temperature point (-30~80, value in Celsius degree): ' bt
     if [[ $bt =~ ^-?[0-9]+$ ]] && [ $(($bt>=-30)) == '1' ] && [ $(($bt<=80)) == '1' ]; then
-      set_below_temperature_action $ba $bt
-      local action=$(below_temperature_action $ba $bt)
-      log "  Below temperature action is set: $action"
+      if set_below_temperature_action $ba $bt; then
+        local action=$(below_temperature_action $ba $bt)
+        log "  Below temperature action is set: $action"
+      else
+        log '  Below temperature action is not set (I2C write failed); the action may be disabled.'
+      fi
       sleep 2
     else
       echo 'Please input integer between -30 and 80...'
