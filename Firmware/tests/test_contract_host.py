@@ -106,6 +106,31 @@ class ContractHost(unittest.TestCase):
                     transport.write(1, (2, 4, 101))
                 self.assertFalse(any(call[0] == 'w11@0x08' for call in transport.calls))
 
+    def test_transport_accepts_only_reviewed_revisions(self):
+        class Fake(host.Transport):
+            def __init__(self, revision):
+                self.revision = revision
+            def transfer(self, *args):
+                if args == ('w1@0x08', '0', 'r1'): return b'\x26'
+                if args == ('w1@0x08', '12', 'r1'): return self.revision
+                if args == ('w1@0x08', '74', 'r1'): return b'\x01'
+                if args == ('w1@0x08', '73', 'r13'):
+                    return bytes((1, 0, 0, 1)) + struct.pack('<HHI', 2, 0, 0) + b'\0'
+                raise AssertionError(args)
+        # Revision 12 keeps revision 11's contract and retained-trust protocol.
+        for revision, status, trusted in ((b'\x09', False, False), (b'\x0a', True, False),
+                (b'\x0b', True, True), (b'\x0c', True, True), (b'\x0d', False, False)):
+            with self.subTest(revision=revision):
+                transport = Fake(revision)
+                if status:
+                    transport.read()
+                else:
+                    self.assertRaises(ValueError, transport.read)
+                if trusted:
+                    transport.require_trusted_calendar()
+                else:
+                    self.assertRaises(ValueError, transport.require_trusted_calendar)
+
     def test_disarmed_utc_enable_does_not_require_calendar_trust(self):
         class Fake(host.Transport):
             def __init__(self):
@@ -246,6 +271,17 @@ sleep() { exit 0; }
                 result, trace = self.vendor(f'set_{kind}_time 01 02 03 04')
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn('set ', trace)
+
+    def test_revision_12_keeps_revision_11_rtc_behaviour(self):
+        for revision, accepted in (('0x0a', False), ('0x0b', True), ('0x0c', True), ('0x0d', False)):
+            with self.subTest(revision=revision):
+                result, trace = self.vendor('get_rtc_timestamp', REVISION=revision)
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
+                if accepted:
+                    self.assertEqual(result.stdout.strip(), str(self.START + 1))
+                result, trace = self.vendor('system_to_rtc', TRUST='0x00', REVISION=revision)
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
+                self.assertEqual('Done' in trace, accepted)
 
     def test_repair_accepts_only_bounded_elapsed_forward_calendar(self):
         result, trace = self.vendor('system_to_rtc', TRUST='0x00',

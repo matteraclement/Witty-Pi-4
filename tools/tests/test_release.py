@@ -249,6 +249,61 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(manifest["software_version"], "4.24")
         self.assertNotIn("rtc_trust", manifest["compatibility"])
 
+    def test_revision_12_profile_requires_software_426_and_rebuild(self):
+        self.commit_scheduled_profile(revision=12, version="4.26")
+        with self.assertRaisesRegex(release.ReleaseError, "requires a byte-identical rebuild"):
+            self.create(profile="scheduled-rev12")
+        with patch("build_firmware.build_firmware", side_effect=self.synthetic_build):
+            manifest = release.verify_bundle(self.create(profile="scheduled-rev12", rebuild=True))
+        self.assertEqual(manifest["release_name"], f"wp4-4.26-fw12-{self.commit[:12]}")
+        self.assertEqual(manifest["compatibility"]["nominal_revision"], 12)
+        self.assertEqual(manifest["compatibility"]["rtc_trust"],
+                         release.PROFILES["scheduled-rev11"]["rtc_trust"])
+        self.assertIn("temperature_read_failure", manifest["compatibility"])
+        self.commit_scheduled_profile(revision=12, version="4.25")
+        with self.assertRaisesRegex(release.ReleaseError, "requires software 4.26"):
+            self.create(profile="scheduled-rev12", rebuild=True, output=self.root / "old-software")
+        self.commit_scheduled_profile(revision=11, version="4.26")
+        with self.assertRaisesRegex(release.ReleaseError, "revision"):
+            self.create(profile="scheduled-rev12", rebuild=True, output=self.root / "old-firmware")
+
+    def test_changed_firmware_or_software_needs_new_revision_or_version(self):
+        published = self.repo / "release"
+        self.commit_scheduled_profile(revision=12, version="4.26")
+        with patch("build_firmware.build_firmware", side_effect=self.synthetic_build):
+            self.create(profile="scheduled-rev12", rebuild=True, output=published)
+            # Identical firmware and software may be republished from a later commit.
+            (self.repo / "README.md").write_text("Documentation-only change\n")
+            self.commit = self.commit_files()
+            self.create(profile="scheduled-rev12", rebuild=True, output=self.root / "docs")
+            changes = (
+                (release.VARIANTS[1][2], image(b"\x05\x06\x07\x08"), "bump I2C_FW_REVISION"),
+                ("Software/wittypi/daemon.sh", "#!/bin/sh\necho changed\n", "bump SOFTWARE_VERSION"),
+            )
+            for path, content, message in changes:
+                with self.subTest(path=path):
+                    original = (self.repo / path).read_bytes()
+                    target = self.repo / path
+                    if isinstance(content, bytes):
+                        target.write_bytes(content)
+                    else:
+                        target.write_text(content)
+                    self.commit = self.commit_files()
+                    # The repository's published bundles count for any output root.
+                    output = self.root / ("changed-" + Path(path).name)
+                    with self.assertRaisesRegex(release.ReleaseError, message):
+                        self.create(profile="scheduled-rev12", rebuild=True, output=output)
+                    self.assertFalse(output.exists())
+                    target.write_bytes(original)
+                    self.commit = self.commit_files()
+
+    def test_historical_unpinned_software_version_does_not_block_reexport(self):
+        # Revision-7/9 bundles share software 4.23 with different trees.
+        self.create(output=self.repo / "release")
+        (self.repo / "Software/wittypi/daemon.sh").write_text("#!/bin/sh\necho other\n")
+        self.commit = self.commit_files()
+        self.create(output=self.root / "reexport")
+
     def test_export_is_deterministic_and_ignores_dirty_worktree(self):
         first = self.create()
         first_bytes = {path.name: path.read_bytes() for path in first.iterdir()}
@@ -526,6 +581,7 @@ class HistoricalBundleTests(unittest.TestCase):
             ("wp4-4.23-fw9-8159567738cd", "atomic-rev9", "rebuilt-byte-identical"),
             ("wp4-4.23-fw9-ca63d2145fa2", "atomic-rev9", "rebuilt-byte-identical"),
             ("wp4-4.24-fw10-234f89a73a42", "scheduled-rev10", "rebuilt-byte-identical"),
+            ("wp4-4.25-fw11-286a7d43c1b4", "scheduled-rev11", "rebuilt-byte-identical"),
         )
         # Verification consumes published bytes; it never rebuilds/backports them.
         with patch("release.git", side_effect=AssertionError("Historical verification used Git")):
@@ -536,7 +592,8 @@ class HistoricalBundleTests(unittest.TestCase):
                         manifest = release.verify_bundle(root / name)
                         self.assertEqual(manifest["profile"], profile)
                         self.assertEqual(manifest["provenance"]["build"], provenance)
-                        self.assertNotIn("rtc_trust", manifest["compatibility"])
+                        if profile not in release.REBUILD_REQUIRED:
+                            self.assertNotIn("rtc_trust", manifest["compatibility"])
 
 
 class IntelHexTests(unittest.TestCase):

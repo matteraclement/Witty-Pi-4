@@ -313,7 +313,7 @@ void initializeRegisters() {
     } 
   }
   // Capabilities belong to this firmware, not the EEPROM from an older image.
-  i2cReg[I2C_FW_REVISION] = 0x0B;
+  i2cReg[I2C_FW_REVISION] = 0x0C;
 
   // copy some EEPROM backed data to PCF85063 and LM75B
   writeToDevice(ADDRESS_LM75B, I2C_LM75B_TOS - I2C_LM75B_TEMPERATURE, &i2cReg[I2C_CONF_OVER_TEMP_POINT], 1);

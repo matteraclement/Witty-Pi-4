@@ -120,7 +120,7 @@ if [ -z ${I2C_MC_ADDRESS+x} ]; then
 
   TIME_UNKNOWN=0
 
-  SOFTWARE_VERSION='4.25'
+  SOFTWARE_VERSION='4.26'
 fi
 
 
@@ -207,14 +207,15 @@ rtc_has_bad_time()
   echo 0
 }
 
-# Revision 11 retains calendar trust across controller resets. Neither a
-# plausible calendar nor a successful bus transfer is evidence of that trust.
+# Revisions 11 and 12 retain calendar trust across controller resets (12 keeps
+# 11's RTC protocol unchanged). Neither a plausible calendar nor a successful
+# bus transfer is evidence of that trust.
 rtc_is_trusted()
 {
   local revision trust
   revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION") || return 1
-  if [[ $revision != 0x0b ]]; then
-    echo 'Retained RTC trust requires reviewed firmware revision 11.' >&2
+  if [[ $revision != 0x0b && $revision != 0x0c ]]; then
+    echo 'Retained RTC trust requires reviewed firmware revision 11 or 12.' >&2
     return 1
   fi
   trust=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_RTC_TRUST") || return 1
@@ -245,7 +246,7 @@ rtc_contract_mode()
   revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION") || return 1
   [[ $revision =~ ^0x[0-9a-fA-F]{2}$ ]] || return 1
   if (( revision < 10 )); then echo 0; return; fi
-  (( revision == 10 || revision == 11 )) || return 1
+  (( revision >= 10 && revision <= 12 )) || return 1
   mode=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" 13) || return 1
   [[ $mode =~ ^0x0[01]$ ]] || return 1
   echo "$((mode))"
@@ -443,7 +444,7 @@ rtc_calendar_writable()
 {
   local revision response
   revision=$(i2c_read "$I2C_BUS" "$I2C_MC_ADDRESS" "$I2C_FW_REVISION") || return 1
-  [[ $revision == 0x0b ]] || return 1
+  [[ $revision == 0x0b || $revision == 0x0c ]] || return 1
   response=$(i2ctransfer -y "$I2C_BUS" "w1@$I2C_MC_ADDRESS" 73 r13) || return 1
   [[ $response =~ ^[[:blank:]]*0x[0-9a-fA-F]{2}([[:blank:]]+0x[0-9a-fA-F]{2}){12}[[:blank:]]*$ ]] || return 1
   local -a status

@@ -65,6 +65,16 @@ PROFILES = {
         "completion_evidence": "late host readonly-mount report; not kernel-halt evidence",
     },
 }
+# Revision 12 keeps revision 11's wire protocol and RTC/contract semantics; it
+# changes temperature protection only.
+PROFILES["scheduled-rev12"] = dict(
+    PROFILES["scheduled-rev11"], nominal_revision=12, software_version="4.26",
+    temperature_read_failure="no protection action and no RTC offset write for that pass",
+    temperature_setters="disarm, write LM75B limit as a complete two-byte word and the point, then arm",
+)
+REBUILDABLE = ("atomic-rev9", "scheduled-rev10", "scheduled-rev11", "scheduled-rev12")
+SCHEDULED_BUILD = ("scheduled-rev10", "scheduled-rev11", "scheduled-rev12")
+REBUILD_REQUIRED = ("scheduled-rev11", "scheduled-rev12")
 BUILD_FQBN = (
     "ATTinyCore:avr:attinyx41:chip=841,clock=8internal,pinmapping=old,"
     "LTO=enable,wiremode=slave,neopixelport=porta,millis=disabled,"
@@ -171,9 +181,10 @@ def metadata(files, profile):
         versions = re.findall(rb"^\s*SOFTWARE_VERSION=['\"]([0-9]+(?:\.[0-9]+)+)['\"]\s*$",
                               files["Software/wittypi/utilities.sh"][1], re.M)
         require(len(versions) == 1, "Missing or ambiguous software version in utilities.sh")
-        if profile == "scheduled-rev11":
-            require(versions[0].decode("ascii") == PROFILES[profile]["software_version"],
-                    "scheduled-rev11 requires software 4.25")
+        expected_version = PROFILES[profile].get("software_version")
+        if expected_version is not None:
+            require(versions[0].decode("ascii") == expected_version,
+                    f"{profile} requires software {expected_version}")
         for path in SKETCHES:
             revisions = re.findall(rb"^\s*i2cReg\[I2C_FW_REVISION\]\s*=\s*(0x[0-9a-fA-F]+|[0-9]+)\s*;\s*(?://[^\n]*)?$",
                                    files[path][1], re.M)
@@ -182,6 +193,41 @@ def metadata(files, profile):
     except KeyError as exc:
         raise ReleaseError(f"Missing required source: {exc.args[0]}") from exc
     return versions[0].decode("ascii")
+
+
+def require_unpublished_identity(roots, profile, version, source, files):
+    """A firmware revision names one HEX set; a pinned software version one host tree.
+
+    Consumers integrate from a bundle and identify boards by revision, so any
+    firmware change needs a new revision and any software change a new version.
+    """
+    revision = PROFILES[profile]["nominal_revision"]
+    images = {PurePosixPath(path).name: sha256(files[path][1]) for _, _, path in VARIANTS}
+    software = {path: info for path, info in source["files"].items()
+                if path.startswith("Software/wittypi/")}
+    pinned = "software_version" in PROFILES[profile]
+    seen = set()
+    for root in roots:
+        for path in sorted(Path(root).glob("wp4-*/release-manifest.json")):
+            if path.resolve() in seen:
+                continue
+            seen.add(path.resolve())
+            name = path.parent.name
+            manifest = load_json(path)
+            try:
+                if manifest["compatibility"]["nominal_revision"] == revision:
+                    require(all(manifest["artifacts"][image]["sha256"] == digest
+                                for image, digest in images.items()),
+                            f"Firmware revision {revision} is already published as {name} with "
+                            "different HEX; bump I2C_FW_REVISION for any firmware change")
+                if pinned and manifest["software_version"] == version:
+                    published = {item: info for item, info in manifest["source"]["files"].items()
+                                 if item.startswith("Software/wittypi/")}
+                    require(published == software,
+                            f"Software {version} is already published as {name} with a different "
+                            "Software/wittypi tree; bump SOFTWARE_VERSION for any software change")
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ReleaseError(f"Unreadable published manifest: {name}") from exc
 
 
 def git(repo, *args):
@@ -317,7 +363,7 @@ def verify_receipt(receipt, manifest, bundle):
         for key in ("command", "build_properties"):
             require(isinstance(item.get(key), list) and bool(item[key]) and
                     all(isinstance(value, str) for value in item[key]), f"Missing build {key}")
-        properties = build_properties(expected["name"], manifest["profile"] in ("scheduled-rev10", "scheduled-rev11"))
+        properties = build_properties(expected["name"], manifest["profile"] in SCHEDULED_BUILD)
         require(item["build_properties"] == properties, "Wrong build properties")
         command = item["command"]
         require(len(command) >= 5 and command[1:4] == ["compile", "--fqbn", BUILD_FQBN] and
@@ -344,9 +390,8 @@ def verify_bundle(bundle):
             all(provenance.get(key) == value for key, value in PROVENANCE.items()), "Invalid provenance metadata")
     require(manifest.get("qualification") == QUALIFICATION, "Unsupported qualification claims")
     rebuilt = provenance["build"] == "rebuilt-byte-identical"
-    require(not rebuilt or profile in ("atomic-rev9", "scheduled-rev10", "scheduled-rev11"),
-            "Legacy images are archived, not rebuilt")
-    require(profile != "scheduled-rev11" or rebuilt, "scheduled-rev11 requires a byte-identical rebuild")
+    require(not rebuilt or profile in REBUILDABLE, "Legacy images are archived, not rebuilt")
+    require(profile not in REBUILD_REQUIRED or rebuilt, f"{profile} requires a byte-identical rebuild")
     expected = BASE_ARTIFACTS | ({"build-verification.json"} if rebuilt else set())
     artifacts = manifest.get("artifacts")
     require(isinstance(artifacts, dict), "Missing artifacts")
@@ -391,12 +436,14 @@ def create_release(repo, ref, profile, output=None, rebuild=False, arduino_cli="
     repo = Path(repo)
     source, files = committed_snapshot(repo, ref)
     version = metadata(files, profile)
-    require(profile != "scheduled-rev11" or rebuild, "scheduled-rev11 requires a byte-identical rebuild")
+    require(profile not in REBUILD_REQUIRED or rebuild, f"{profile} requires a byte-identical rebuild")
     variants = variant_metadata(files)
-    require(not rebuild or profile in ("atomic-rev9", "scheduled-rev10", "scheduled-rev11"),
+    require(not rebuild or profile in REBUILDABLE,
             "Historical legacy-rev7 images must be archived without rebuilding")
     name = f"wp4-{version}-fw{PROFILES[profile]['nominal_revision']}-{source['commit'][:12]}"
     root = Path(output) if output is not None else repo / "release"
+    published_roots = (root, repo / "release")
+    require_unpublished_identity(published_roots, profile, version, source, files)
     root.mkdir(parents=True, exist_ok=True)
     target = root / name
     require(not os.path.lexists(target), f"Release already exists: {target}")
@@ -452,6 +499,7 @@ def create_release(repo, ref, profile, output=None, rebuild=False, arduino_cli="
                 f"{sha256(path.read_bytes())}  {path.name}\n" for path in sorted(stage.iterdir())), encoding="ascii")
             verify_bundle(stage)
             require(not os.path.lexists(target), f"Release already exists: {target}")
+            require_unpublished_identity(published_roots, profile, version, source, files)
             stage.rename(target)
     finally:
         lock.rmdir()

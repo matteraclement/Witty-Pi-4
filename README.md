@@ -16,9 +16,25 @@ Witty Pi 4 supports all Raspberry Pi models with 40-pin header, including A+, B+
 *   [Witty Pi 4 Product Page](https://www.uugear.com/product/witty-pi-4/)
 *   [Witty Pi 4 User Manual](https://www.uugear.com/doc/WittyPi4_UserManual.pdf)
 
+### Temperature protection (software 4.26, firmware 12)
+
+The current `scheduled-rev12` profile pairs firmware **12** with software **4.26**.
+Temperature protection treats a failed LM75B read as no measurement: the firmware
+skips the over/below-temperature action and leaves the RTC offset unchanged for
+that pass, instead of decoding the failure as −1 °C. The menu's temperature
+setters disarm the action, write the point, then arm the new action; a failed
+point write leaves the action disabled. They write the LM75B limit mirror
+(registers 52/53) as a complete two-byte word, which the firmware requires, so
+the menu shows the new point immediately.
+
+Every register, retained RTC trust and the scheduled contract are unchanged from
+revision 11. Software 4.26 accepts revision 12 wherever 4.25 accepted revision 11;
+software 4.25 rejects revision 12 and fails closed, so a revision-12 board needs
+software 4.26. Revision-11 and older bundles do not contain these fixes.
+
 ### Retained RTC trust and scheduled shutdown (software 4.25, firmware 11)
 
-The current `scheduled-rev11` profile retains RTC trust across MCU resets. Virtual,
+The `scheduled-rev11` profile retains RTC trust across MCU resets. Virtual,
 read-only register **74** returns exactly one byte: **0** untrusted or **1** trusted.
 Reset, unknown and older retention markers fail closed. Ordinary time reads,
 alarms and contract arming reject an untrusted calendar. Repair uses independently
@@ -40,15 +56,6 @@ Installing software does not flash a board or qualify its timing. Independent
 scheduled enforcement requires explicit UTC migration and matching downstream
 integration. Native Raspberry Pi behavior and historical WP4 bundles are unchanged;
 retained trust is not backported to those bundles.
-
-Temperature protection treats a failed LM75B read as no measurement: the firmware
-skips the over/below-temperature action and leaves the RTC offset unchanged for
-that pass, instead of decoding the failure as −1 °C. The menu's temperature
-setters disarm the action, write the point, then arm the new action; a failed
-point write leaves the action disabled. They write the LM75B limit mirror
-(registers 52/53) as a complete two-byte word, which the firmware requires, so
-the menu shows the new point immediately. The committed HEX include this change;
-the published `wp4-4.25-fw11-286a7d43c1b4` bundle does not.
 
 ### Immutable vendor releases
 
@@ -106,6 +113,22 @@ safety, Git blob inventory, source/payload consistency and any build receipt.
 Checksums prove integrity, not external authenticity: downstream consumers must
 pin the reviewed manifest SHA-256.
 
+#### Every change gets a new firmware revision or software version
+
+Downstream integrations consume a bundle directory alone and identify a board by
+its firmware revision. Therefore every released change to firmware source or HEX
+increments `I2C_FW_REVISION` in both sketches and adds a matching profile in
+`tools/release.py` (and the `Makefile` default); every released change to
+`Software/wittypi/` increments `SOFTWARE_VERSION`. Host revision checks are
+extended in the same change. `tools/release.py create` enforces the rule before
+building: it refuses a bundle whose firmware revision is already published, in the
+output root or this repository's `release/`, with different HEX, and one whose
+pinned software version (revision 11 and later) is already published with a
+different `Software/wittypi/` tree. Republishing identical firmware and software
+from a later commit, such as a documentation fix, remains allowed. The revision-7
+and revision-9 bundles predate the rule and share software 4.23 with different
+trees.
+
 To create a future release, first commit the intended software, source and
 matching HEX files. With Arduino CLI, ATTinyCore **1.5.2** and AVR GCC
 **7.3.0-atmel3.6.1-arduino7** already installed:
@@ -120,8 +143,9 @@ The manifest continues to identify the source commit used for the build. That
 artifact-only commit keeps the checkout clean and does not require another
 release; otherwise packaging would create an endless commit/release loop.
 
-This defaults to committed `HEAD`, profile `scheduled-rev11`, output `release/` and
-rebuilding all three variants. Revision 11 requires software **4.25**.
+This defaults to committed `HEAD`, profile `scheduled-rev12`, output `release/` and
+rebuilding all three variants. Revision 12 requires software **4.26**; revision 11
+requires **4.25**.
 `REF=<commit>`, `OUTPUT=/path/to/releases` and
 `ARDUINO_CLI=/path/to/arduino-cli` override the source, destination and toolchain;
 `PYTHON=/path/to/python3` selects Python. The release tool does not install packages
@@ -136,14 +160,15 @@ make release REF=d466cbc18aaea619c1f41ddb170789a661be3338 PROFILE=legacy-rev7
 Creation refuses an existing destination, including the bundled examples above.
 Use `OUTPUT=/path/to/new-release-root` for a separate export. The underlying
 `python3 tools/release.py create --ref <commit> --profile <profile>` interface
-remains available. The new `scheduled-rev11` profile requires `--rebuild` and
-`rebuilt-byte-identical` provenance; neither creation nor offline verification
-accepts an archived-only revision-11 bundle. Historical profiles retain their
-original policy: omitting `--rebuild` archives committed artifacts and explicitly
-records `archived-not-rebuilt`, not source-to-binary verification.
-`make release` rebuilds `atomic-rev9`, `scheduled-rev10` and `scheduled-rev11`, and
-archives `legacy-rev7`. Profile selection is an explicit maintainer review, not
-automatic ABI discovery. Only these four explicitly named protocol profiles are
+remains available. The `scheduled-rev11` and `scheduled-rev12` profiles require
+`--rebuild` and `rebuilt-byte-identical` provenance; neither creation nor offline
+verification accepts an archived-only revision-11 or revision-12 bundle. Historical
+profiles retain their original policy: omitting `--rebuild` archives committed
+artifacts and explicitly records `archived-not-rebuilt`, not source-to-binary
+verification. `make release` rebuilds `atomic-rev9`, `scheduled-rev10`,
+`scheduled-rev11` and `scheduled-rev12`, and archives `legacy-rev7`. Profile
+selection is an explicit maintainer review, not automatic ABI discovery. Only these
+five explicitly named protocol profiles are
 supported. Publication happens after verification; failed builds leave no final
 release. Retain old directories while devices or rollback plans need them; never
 edit a published bundle or choose a board's input by "newest".
@@ -162,6 +187,8 @@ WP4 exposes product ID and firmware revision, not a cryptographic build identity
 Revision 7 can be overridden by retained EEPROM; revision 9 comes from the running
 image. Product ID can still be overridden by EEPROM in both. Record the actual
 board variant and flashed artifact hash; a register read cannot prove a Git commit.
+Within this repository's releases, each firmware revision names exactly one set
+of three images.
 
 Firmware flashing is a separate, authorized ISP maintenance operation, never a
 release-tool action. Follow the [vendor procedure](https://www.uugear.com/portfolio/compile-flash-firmware-for-witty-pi-4/)
@@ -181,7 +208,8 @@ python3 -m unittest discover -s tools/tests -v
 
 These suites cover production firmware/host behavior and deterministic release
 fixtures, including retained trust, profile/version admission, mandatory revision-11
-rebuild evidence, unchanged historical verification, corruption, unsafe archives,
+and revision-12 rebuild evidence, refusal to republish a revision or pinned software
+version with changed content, unchanged historical verification, corruption, unsafe archives,
 working-tree isolation, failed-build cleanup, immutable destinations, compiler line
 endings and AVR resource limits. Synthetic build receipts in tooling tests are not
 AVR build evidence; only a real pinned-toolchain rebuild supplies that evidence.
@@ -211,7 +239,7 @@ standard, Mini and L3V7 in isolated directories, applies LTO, linker relaxation 
 the scheduled profile's size-oriented compiler flags, and records flash/static-RAM
 usage for each variant. `make release` rebuilds the committed source, not dirty
 working-tree edits, and rejects any committed HEX that differs from its rebuild.
-Do not use a revision-9 compile command or resource count for revision 11; use the
+Do not use a revision-9 compile command or resource count for revision 11 or later; use the
 new bundle's verified build receipt. The build refuses flash or static-RAM overflow,
 but does not measure peak stack use.
 
@@ -225,7 +253,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, "tools")
 from build_firmware import build_firmware
-output = Path("/tmp/wp4-rev11-build")
+output = Path("/tmp/wp4-rev12-build")
 receipt = build_firmware(Path("."), output, "arduino-cli")
 (output / "build-verification.json").write_text(json.dumps(receipt, indent=2) + "\n")
 PY
@@ -266,8 +294,8 @@ System-to-RTC synchronization sends register 58 and all seven calendar bytes
 in one `w8@0x08` transaction. The MCU forwards the complete calendar in one
 internal-bus write, keeping the RTC counters frozen until all fields are set.
 Incomplete or overlong calendar commands and individual calendar-field writes
-are rejected without touching the RTC. Revision 11 also rejects calendar mutation
-while a scheduled contract is armed or active, and retains an untrusted state
+are rejected without touching the RTC. Revision 11 and later also reject calendar mutation
+while a scheduled contract is armed or active, and retain an untrusted state
 through interrupted/failed writes and resets. Register 74 is virtual and read-only;
 it does not expand the EEPROM-backed legacy register array into journal storage.
 The advertised firmware revision comes from the running image, not an older
@@ -276,13 +304,13 @@ revision retained in EEPROM.
 The host verifies the complete calendar after writing, allowing elapsed time
 and one pending RTC tick. Failed transfers or verification leave `TIME_UNKNOWN`
 unchanged and report failure. Atomicity prevents rollover between fields, not a
-physical rollback; revision 11 instead keeps trust invalid after an incomplete
+physical rollback; revision 11 and later instead keep trust invalid after an incomplete
 transaction until an independently sourced, fully verified repair succeeds.
 
 The seconds register's oscillator-stop (OS) flag is checked before converting
 time. A flagged RTC cannot set Linux time or trigger firmware startup/shutdown
-alarms. Rejected reads leave NTP and `TIME_UNKNOWN` unchanged. Revision 11 never
-repairs from an untrusted RTC read or clears a pending marker during boot-time
+alarms. Rejected reads leave NTP and `TIME_UNKNOWN` unchanged. Revision 11 and later never
+repair from an untrusted RTC read or clear a pending marker during boot-time
 initialization; repair requires independently accepted time. Historical bundles
 keep their original boot-time bad-time/zero-year initialization policy.
 

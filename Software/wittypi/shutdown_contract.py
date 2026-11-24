@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Scheduled contract transport (revisions 10/11) and late filesystem completion.
+"""Scheduled contract transport (revisions 10-12) and late filesystem completion.
 
 Nothing is armed on import or by a status read. The late path reports visible
 mount safety, not kernel halt, recording success, or measured removal of VOUT.
@@ -99,14 +99,14 @@ class Transport:
     def read(self) -> Status:
         product = self.transfer('w1@0x08', '0', 'r1')
         revision = self.transfer('w1@0x08', '12', 'r1')
-        if product not in (b'\x26', b'\x36', b'\x37') or revision not in (b'\x0a', b'\x0b'):
-            raise ValueError('Scheduled contract requires a reviewed revision-10/11 WP4 product')
+        if product not in (b'\x26', b'\x36', b'\x37') or revision not in (b'\x0a', b'\x0b', b'\x0c'):
+            raise ValueError('Scheduled contract requires a reviewed revision-10/11/12 WP4 product')
         return decode(self.transfer('w1@0x08', '73', 'r13'))
 
     def require_trusted_calendar(self) -> None:
-        if (self.transfer('w1@0x08', '12', 'r1') != b'\x0b'
+        if (self.transfer('w1@0x08', '12', 'r1') not in (b'\x0b', b'\x0c')
                 or self.transfer('w1@0x08', '74', 'r1') != b'\x01'):
-            raise ValueError('Arming requires firmware revision 11 and retained RTC trust')
+            raise ValueError('Arming requires firmware revision 11 or 12 and retained RTC trust')
 
     def write(self, action: int, identity: tuple[int, int, int]) -> None:
         if action == 1:

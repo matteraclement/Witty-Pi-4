@@ -1,4 +1,4 @@
-# Revision 11 retained RTC trust and scheduled shutdown contract
+# Revision 11/12 retained RTC trust and scheduled shutdown contract
 
 The `scheduled-rev11` profile pairs firmware **11** with software **4.25** and adds
 retained RTC trust. The **60-second normal target and 120-second total emergency
@@ -7,6 +7,13 @@ limit**, measured from the buffered end of the ON window, T, and the
 the legacy register-21 delay keep their previous meaning. Historical immutable
 bundles remain unchanged; this is not a backport. Source/build verification does
 not establish physical qualification or deployment.
+
+The `scheduled-rev12` profile pairs firmware **12** with software **4.26**. Every
+register, the retained-trust protocol and this contract are unchanged from
+revision 11; revision 12 changes only temperature protection (see the README).
+Software 4.26 accepts revision 12 wherever 4.25 accepted revision 11.
+Software 4.25 rejects revision 12 and fails closed, so a revision-12 board needs
+software 4.26.
 
 ## Ownership and transitions
 
@@ -39,7 +46,8 @@ services activation. The source preserves the corrected TXD reboot-origin handli
 
 ## Register protocol
 
-Firmware revision register 12 is `0x0b`. Products are standard `0x26`, Mini `0x36`
+Firmware revision register 12 is `0x0b` (revision 11) or `0x0c` (revision 12).
+Products are standard `0x26`, Mini `0x36`
 and L3V7 `0x37`. The product/revision pair cannot attest an exact flashed binary;
 installation must also retain the reviewed artifact and physical board identity.
 
