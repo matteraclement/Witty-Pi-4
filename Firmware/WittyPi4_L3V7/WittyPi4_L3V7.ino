@@ -592,10 +592,12 @@ uint16_t getOutputCurrent() {
 }
 
 
-// get temperature
-char getTemperature() {
-  readFromDevice(ADDRESS_LM75B, 0, 1);
-  return softWireMaster.read();
+// get temperature; false when the LM75B did not return its byte, because
+// every value (0xFF is -1 degree) is a valid reading and cannot mark failure
+bool getTemperature(char &t) {
+  if (readFromDevice(ADDRESS_LM75B, 0, 1) != 1) return false;
+  t = softWireMaster.read();
+  return true;
 }
 
 
@@ -993,7 +995,8 @@ void handleTemperatureActtonsIfNeeded() {
   if (skipTempShutdownCount < 120) {
     skipTempShutdownCount ++;
   }
-  char t = getTemperature();
+  char t;
+  if (!getTemperature(t)) return;  // no measurement, no action
   byte action = 0;
   byte reason = 0;
   if (t > (char)i2cReg[I2C_CONF_OVER_TEMP_POINT]) {
@@ -1083,7 +1086,8 @@ void adjustRTCIfNeeded() {
     skipAdjustRtcCount = 0;
   
     if (i2cReg[I2C_CONF_RTC_ENABLE_TC] == 1) {
-      char t = getTemperature();
+      char t;
+      if (!getTemperature(t)) return;  // keep the current RTC offset
       char adj = 0;
       if (t < 26) {
         adj = (t - 26) * 55 / 434;

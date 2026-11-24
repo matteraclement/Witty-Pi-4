@@ -36,7 +36,7 @@ void ledOff() { ledIsOn=false; }
 void powerOn() { powerIsOn=true; pins[PIN_CTRL]=1; }
 void sleep() { ++sleepCount; }
 void updateRegister(byte reg, byte value) { assert(reg<50); i2cReg[reg]=value; }
-char getTemperature() { return temperature; }
+bool getTemperature(char &t) { t=temperature; return true; }
 bool contractActive();
 void contractInterrupted();
 

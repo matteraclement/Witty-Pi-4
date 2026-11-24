@@ -46,6 +46,7 @@ byte lowVoltageCacheInteger, lowVoltageCacheDecimal;
 int pins[12], modes[12], sleepCount;
 uint16_t voltage;
 char temperature;
+bool temperatureRead;
 int digitalRead(int pin) { return pins[pin]; }
 void digitalWrite(int pin, int value) {
   // An input pull-up does not override an externally held switch.
@@ -64,7 +65,11 @@ void powerOn() { powerIsOn=true; pins[PIN_CTRL]=1; }
 void sleep() { ++sleepCount; } // Stop at sleep entry, before any future wake.
 void updateRegister(byte reg, byte value) { i2cReg[reg]=value; }
 uint16_t getInputVoltage() { return voltage; }
-char getTemperature() { return temperature; }
+bool getTemperature(char &t) {
+  if (!temperatureRead) return false;
+  t=temperature;
+  return true;
+}
 bool canTriggerAlarm() { return true; }
 void reset_rtc_alarm() {}
 void copyAlarm(byte) {}
@@ -98,7 +103,7 @@ void coldBootReady() {
   lastButton=1; lastSystemUp=0; alarm1Delayed=0;
   skipTempShutdownCount=120; skipLowVoltageDetectCount=180;
   lowVoltageCacheInteger=lowVoltageCacheDecimal=0;
-  voltage=3000; temperature=90;
+  voltage=3000; temperature=90; temperatureRead=true;
   for (int &v : pins) v=0;
   for (int &v : modes) v=INPUT_PULLUP;
   for (byte &v : i2cReg) v=0;
@@ -164,6 +169,31 @@ int main() {
   handleTemperatureActtonsIfNeeded();
   assert(turningOff && !turnOffFromTXD);
   finishEmulatedClick(); expectCut();
+
+  // A failed LM75B read is not -1 degree: it never selects a protection
+  // action, while a genuine -1 degree reading still does.
+  for (int over=0; over<2; ++over) {
+    for (byte action=1; action<=2; ++action) {
+      for (int ok=0; ok<2; ++ok) {
+        coldBootReady(); softwareReboot(); sysUp();
+        if (action == 2) powerIsOn=false; // Startup acts only while off.
+        byte reasonBefore=i2cReg[I2C_ACTION_REASON];
+        if (over) {
+          i2cReg[I2C_CONF_OVER_TEMP_POINT]=byte(-2);
+          i2cReg[I2C_CONF_OVER_TEMP_ACTION]=action;
+        } else {
+          i2cReg[I2C_CONF_BELOW_TEMP_POINT]=0;
+          i2cReg[I2C_CONF_BELOW_TEMP_ACTION]=action;
+        }
+        temperature=-1; temperatureRead=ok;
+        handleTemperatureActtonsIfNeeded();
+        assert(isButtonClickEmulated == bool(ok));
+        assert(turningOff == (ok && action == 1));
+        int reason=over ? REASON_OVER_TEMPERATURE : REASON_BELOW_TEMPERATURE;
+        assert(i2cReg[I2C_ACTION_REASON] == (ok ? reason : reasonBefore));
+      }
+    }
+  }
 
   coldBootReady(); softwareReboot(); sysUp();
   i2cReg[I2C_CONF_DAY_ALARM2]=1;

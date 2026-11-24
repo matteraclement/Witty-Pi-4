@@ -18,8 +18,13 @@ using byte=unsigned char;
 byte i2cReg[50], skipAdjustRtcCount, lastOffset;
 int adc;
 char temperature;
+bool temperatureRead=true;
 int analogRead(byte) { return adc; }
-char getTemperature() { return temperature; }
+bool getTemperature(char &t) {
+  if (!temperatureRead) return false;
+  t=temperature;
+  return true;
+}
 void writeToDevice(byte, byte, volatile byte* data, byte count) {
   assert(count==1); lastOffset=*data;
 }
@@ -58,6 +63,17 @@ int main() {
       adjustRTCIfNeeded();
       assert(lastOffset==value2Offset(offset2Value(offset)+expected));
     }
+  }
+  // A failed LM75B read leaves the RTC offset alone; without temperature
+  // compensation the configured offset is still written.
+  temperatureRead=false;
+  for (byte tc=0; tc<2; ++tc) {
+    i2cReg[I2C_CONF_RTC_ENABLE_TC]=tc;
+    i2cReg[I2C_CONF_RTC_OFFSET]=0x05;
+    lastOffset=0xAA; skipAdjustRtcCount=254;
+    adjustRTCIfNeeded();
+    assert(skipAdjustRtcCount==0);
+    assert(lastOffset==(tc ? 0xAA : 0x05));
   }
 }
 """
