@@ -200,11 +200,17 @@ decide the EEPROM retention/reset policy. Recheck identity, calibration, setting
 clock synchronization, clean shutdown and real wake afterward. A matching build
 or checksum is not electrical, timing or fleet qualification.
 
+[`flash_wittypi4_from_standaloneraspberrypi/`](flash_wittypi4_from_standaloneraspberrypi/)
+implements this procedure with a spare Raspberry Pi as ISP programmer: it verifies a
+bundle offline, then flashes one variant and prints the expected identity registers.
+It does not set the vendor fuses and the chip erase wipes EEPROM; read its README first.
+
 The complete hardware-free suites are:
 
 ```sh
 python3 -m unittest discover -s Firmware/tests -v
 python3 -m unittest discover -s tools/tests -v
+python3 -m unittest discover -s flash_wittypi4_from_standaloneraspberrypi/tests -v
 ```
 
 These suites cover production firmware/host behavior and deterministic release
