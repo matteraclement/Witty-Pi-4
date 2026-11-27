@@ -21,36 +21,7 @@ case $variant in
   *) usage ;;
 esac
 
-PYTHON=${PYTHON:-python3}
-RELEASE_TOOL=${RELEASE_TOOL:-$FLASH_DIR/../tools/release.py}
-[ -f "$RELEASE_TOOL" ] || die "release tool not found: $RELEASE_TOOL (copy tools/ next to this folder)"
-[ -d "$release" ] || die "not a directory: $release"
-release=$(cd "$release" && pwd)
-
-"$PYTHON" "$RELEASE_TOOL" verify "$release" || die "bundle verification failed; nothing was flashed"
-
-IFS=$'\t' read -r artifact product_id revision software name < <(
-  "$PYTHON" - "$release/release-manifest.json" "$variant" <<'PY'
-import json
-import sys
-
-manifest = json.load(open(sys.argv[1]))
-for entry in manifest["variants"]:
-    if entry["name"] == sys.argv[2]:
-        print("\t".join([
-            entry["artifact"],
-            entry["product_id"],
-            str(manifest["compatibility"]["nominal_revision"]),
-            manifest["software_version"],
-            manifest["release_name"],
-        ]))
-        break
-else:
-    sys.exit("release: manifest has no variant " + sys.argv[2])
-PY
-)
-hex=$release/$artifact
-[ -f "$hex" ] || die "missing $hex"
+load_bundle "$release" "$variant"
 
 select_avrdude
 build_conf

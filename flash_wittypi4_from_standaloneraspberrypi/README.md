@@ -9,8 +9,9 @@ proves nothing about hardware qualification.
 
 | Script | Does |
 | --- | --- |
-| `check.sh` | Read-only link test: prints MCU signature (`0x1e9315`) and fuses. Writes nothing. |
+| `check.sh [--standard\|--mini\|--l3v7 [release-dir]]` | Read-only link test: prints MCU signature (`0x1e9315`) and fuses. Writes nothing. With a variant flag it also verifies the chip's flash against that variant's HEX in the bundle (newest in `../release` unless given). |
 | `flash.sh [-y] <release-dir> <standard\|mini\|l3v7>` | Runs `tools/release.py verify` on the bundle, shows release/variant/SHA256, asks for confirmation, then flashes the variant's HEX. |
+| `updatefirmware.sh [-y] [--standard\|--mini\|--l3v7] [release-dir]` | Short form of `flash.sh`: no flag = standard board, `--mini` / `--l3v7` pick that variant; without `release-dir` it takes the newest `wp4-*` bundle in `../release`. Same verification and confirmation. |
 | `raspi-gpio.conf` | The `RasPi` programmer (pins below), appended at run time to a temporary copy of `/etc/avrdude.conf`. |
 
 The variant → HEX file and product ID mapping comes from the bundle's
@@ -60,8 +61,9 @@ Then on the programmer Pi, with the board wired:
 ```sh
 cd ~/wp4/flash_wittypi4_from_standaloneraspberrypi
 ./check.sh
-./flash.sh ../release/wp4-4.26-fw12-4f7c60d444d9 standard   # or mini / l3v7
-./check.sh
+./updatefirmware.sh --mini                                  # newest bundle; no flag = standard, or --l3v7
+# same as: ./flash.sh ../release/wp4-4.26-fw12-4f7c60d444d9 mini
+./check.sh --mini                                           # also confirms the flash holds the Mini image
 ```
 
 `flash.sh` stops before touching the MCU if the bundle fails verification or the
